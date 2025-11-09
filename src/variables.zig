@@ -15,6 +15,6 @@ pub inline fn variableFromLiteral(l: Literal) Variable {
     return @abs(l);
 }
 
-pub inline fn not(l: Literal) Variable {
+pub inline fn not(l: Literal) Literal {
     return -1 * l;
 }
