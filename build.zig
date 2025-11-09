@@ -83,6 +83,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const zli_dep = b.dependency("zli", .{ .target = target, .optimize = optimize });
+    exe.root_module.addImport("zli", zli_dep.module("zli"));
+
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
