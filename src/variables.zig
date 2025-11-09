@@ -14,3 +14,7 @@ pub inline fn isNegative(l: Literal) bool {
 pub inline fn variableFromLiteral(l: Literal) Variable {
     return @abs(l);
 }
+
+pub inline fn not(l: Literal) Variable {
+    return -1 * l;
+}
