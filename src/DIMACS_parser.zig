@@ -1,6 +1,7 @@
 const std = @import("std");
 const CNF = @import("clauses.zig").CNF;
 const Literal = @import("variables.zig").Literal;
+const not = @import("variables.zig").not;
 
 const TokenIterator = std.mem.TokenIterator;
 
@@ -42,17 +43,18 @@ fn parse_line(alloc: std.mem.Allocator, line: []const u8, cnf: *CNF) !void {
     if (content.peek() == null) return;
     if (std.mem.eql(u8, content.peek().?, "c")) return;
 
-    var literals = std.ArrayList(Literal).empty;
+    var literals = std.AutoHashMap(Literal, void).init(alloc);
     defer literals.deinit(alloc);
 
     while (content.next()) |token| {
         if (std.mem.eql(u8, token, "0")) break;
-        try literals.append(alloc, try std.fmt.parseInt(i32, token, 10));
+        const lit = try std.fmt.parseInt(i32, token, 10);
+        if (literals.contains(not(lit))) return; // We have x and not x, this is a tautology
+        try literals.put(lit, void);
     }
 
-    const lit = try literals.toOwnedSlice(alloc);
-    defer alloc.free(lit);
-    try cnf.addClause(lit);
+    const lit = literals.keyIterator().items;
+    try cnf.addClause(lit[0..literals.keyIterator().len]);
 }
 
 pub fn parse_dimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
