@@ -75,21 +75,30 @@ pub const CNF = struct {
         return AliveClauseIter{ .cnf = self, .index = 0 };
     }
 
-    pub fn prettyPrint(self: *CNF) void {
+    pub fn toString(self: *CNF, allocator: std.mem.Allocator) ![]u8 {
+        var list = std.ArrayList(u8).empty;
+        defer list.deinit(allocator);
+
         var iter = self.aliveClauses();
         var clauseIndex: usize = 0;
-        while (true) {
-            const clause = iter.next();
-            if (clause == null) break;
 
-            std.debug.print("Clause {}: [", .{clauseIndex});
-            const slice = clause.?; // unwrap
-            for (slice) |lit| {
-                std.debug.print("{}", .{lit}); // adjust if Literal is a struct
+        while (iter.next()) |clause| {
+            try list.writer(allocator).print("Clause {d}: [", .{clauseIndex});
+
+            var first = true;
+            for (clause) |lit| {
+                if (!first) {
+                    try list.appendSlice(allocator, ", ");
+                }
+                first = false;
+                try list.writer(allocator).print("{}", .{lit});
             }
-            std.debug.print("]\n", .{});
+
+            try list.appendSlice(allocator, "]\n");
             clauseIndex += 1;
         }
+
+        return list.toOwnedSlice(allocator);
     }
 };
 
