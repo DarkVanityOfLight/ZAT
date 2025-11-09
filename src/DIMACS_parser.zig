@@ -44,17 +44,24 @@ fn parse_line(alloc: std.mem.Allocator, line: []const u8, cnf: *CNF) !void {
     if (std.mem.eql(u8, content.peek().?, "c")) return;
 
     var literals = std.AutoHashMap(Literal, void).init(alloc);
-    defer literals.deinit(alloc);
+    defer literals.deinit();
 
     while (content.next()) |token| {
         if (std.mem.eql(u8, token, "0")) break;
         const lit = try std.fmt.parseInt(i32, token, 10);
         if (literals.contains(not(lit))) return; // We have x and not x, this is a tautology
-        try literals.put(lit, void);
+        try literals.put(lit, {});
     }
 
-    const lit = literals.keyIterator().items;
-    try cnf.addClause(lit[0..literals.keyIterator().len]);
+    const keys = try alloc.alloc(i32, literals.count());
+    defer alloc.free(keys);
+
+    var it = literals.keyIterator();
+    var i: usize = 0;
+    while (it.next()) |k| : (i += 1) {
+        keys[i] = k.*;
+    }
+    try cnf.addClause(keys);
 }
 
 pub fn parse_dimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
@@ -75,14 +82,16 @@ pub fn parse_dimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
     return cnf;
 }
 
-pub fn read_dimacs(file: []u8, alloc: std.mem.Allocator) !*CNF {
+pub fn read_dimacs(
+    alloc: std.mem.Allocator,
+    file: []const u8,
+) !*CNF {
     const arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
 
     const f = try std.fs.cwd().openFile(file, .{ .mode = .read_only });
     defer f.close();
 
-    const reader = f.reader(arena);
-    const data = try reader.readAlloc(reader.getSize());
+    const data = try f.readToEndAlloc(alloc, 1_000_000);
     return try parse_dimacs(alloc, data);
 }
