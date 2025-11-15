@@ -15,7 +15,7 @@ const Trail = std.array_list.Managed(TrailFrame);
 // Everyone should clean up after themself
 // Be carefull with nested usages
 // This is scoped for the dpll function
-var literalSet: LiteralDict = undefined;
+var literalSet: *LiteralDict = undefined;
 
 fn onTrail(trail: *Trail, lit: Variables.Literal) bool {
     for (trail.items) |frame| {
@@ -67,9 +67,10 @@ fn popTrail(trail: *Trail) ?Variables.Literal {
             return frame.literal;
         }
     }
+    return null;
 }
 
-fn unitPropagation(cnf: *Clauses.CNF, trail: *Trail) void {
+fn unitPropagation(cnf: *Clauses.CNF, trail: *Trail) !void {
     var flag = true;
     while (flag) : (flag = false) {
         var iter = cnf.aliveClauses();
@@ -77,7 +78,7 @@ fn unitPropagation(cnf: *Clauses.CNF, trail: *Trail) void {
             var unassigned: ?Variables.Literal = null;
             var unassigned_count: usize = 0;
 
-            for (clause.literals) |literal| {
+            for (clause) |literal| {
                 if (literalSet.containsLiteral(literal)) {
                     // Clause satisfied
                     unassigned_count = 0;
@@ -89,12 +90,12 @@ fn unitPropagation(cnf: *Clauses.CNF, trail: *Trail) void {
                 }
             }
 
-            if (unassigned_count == 1 and unassigned) {
-                trail.append(TrailFrame{
+            if (unassigned_count == 1 and unassigned != null) {
+                try trail.append(TrailFrame{
                     .literal = unassigned.?,
                     .reason = .unit_propagation,
                 });
-                literalSet.addLiteral(unassigned.?, void);
+                literalSet.addLiteral(unassigned.?, undefined);
                 flag = true;
             }
         }
@@ -102,19 +103,20 @@ fn unitPropagation(cnf: *Clauses.CNF, trail: *Trail) void {
 }
 
 fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
-    const pureSet = try LiteralDict.init(gpa, @divFloor(cnf.num_variables, 2) + 1);
-    defer pureSet.deinit();
-
     const Pure = struct {
         pos: bool,
         neg: bool,
     };
 
-    for (pureSet.arr) |e| {
-        e.ptr = &Pure{
+    const pureSet = try gpa.alloc(Pure, cnf.num_variables + 1);
+    defer gpa.free(pureSet);
+
+    for (pureSet) |*e| {
+        const p = Pure{
             .pos = false,
             .neg = false,
         };
+        e.* = p;
     }
 
     var flag = true;
@@ -122,32 +124,33 @@ fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
         var iter = cnf.aliveClauses();
         while (iter.next()) |clause| {
             for (clause) |literal| {
-                const pPtr: *Pure = pureSet.getAt(Pure, Variables.varOf(literal));
+                var p: Pure = pureSet[Variables.varOf(literal)];
                 if (Variables.isPositive(literal)) {
-                    pPtr.pos = true;
+                    p.pos = true;
                 } else {
-                    pPtr.neg = true;
+                    p.neg = true;
                 }
             }
         }
 
-        for (0..cnf.num_variables) |i| {
-            const at = pureSet.getAt(Pure, i);
+        //TODO: Off by one?
+        for (1..cnf.num_variables) |i| {
+            const at = pureSet[i];
             if (!(at.pos and at.neg)) {
                 const lit = blk: {
                     if (at.pos) {
-                        break :blk i;
+                        break :blk Variables.litOf(@intCast(i));
                     } else {
-                        break :blk Variables.not(i);
+                        break :blk Variables.not(Variables.litOf(@intCast(i)));
                     }
                 };
 
                 if (!literalSet.containsLiteral(lit)) {
-                    trail.append(TrailFrame{
+                    try trail.append(TrailFrame{
                         .literal = lit,
                         .reason = .pure,
                     });
-                    literalSet.addLiteral(lit, void);
+                    literalSet.addLiteral(lit, undefined);
                     flag = true;
                 }
             }
@@ -156,15 +159,16 @@ fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
 }
 
 pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Clauses.Satisfiable {
-    const gpaa = std.heap.ArenaAllocator.init(gpa);
+    var gpaa = std.heap.ArenaAllocator.init(gpa);
+    const gpaai = gpaa.allocator();
     defer gpaa.deinit();
 
     // Initialize module wide epoch set
-    literalSet = LiteralDict.init(gpaa, cnf.num_variables);
+    literalSet = try LiteralDict.init(gpaai, cnf.num_variables);
     defer literalSet.deinit();
 
     // Init a trail
-    var trail = Trail.init(gpaa);
+    var trail = Trail.init(gpaai);
     defer trail.deinit();
 
     var lastAssigned: ?Variables.Literal = null;
@@ -176,22 +180,23 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Clauses.Satisfiable {
             // Backtrack
             .unsat => {
                 if (trail.getLastOrNull() != null) {
-                    lastAssigned = popTrail(trail);
+                    lastAssigned = popTrail(&trail);
                 } else if (lastAssigned != null) {
                     // We assigned something, but still are at the end of the stack
                     // unsat
                     return Clauses.Satisfiable.unsat;
                 }
             },
+            .unknown => {},
         }
         // Unknown: Keep on working
-        unitPropagation(cnf, &trail);
-        try pureLiteral(gpa, cnf, &trail);
+        try unitPropagation(cnf, &trail);
+        try pureLiteral(gpaai, cnf, &trail);
 
         // Choose the next literal to assign
         if (chooseLit(cnf, lastAssigned)) |lit| {
-            trail.append(TrailFrame{ .literal = lit, .reason = Reason.assigned });
-            literalSet.addLiteral(lit, void);
+            try trail.append(TrailFrame{ .literal = lit, .reason = Reason.assigned });
+            literalSet.addLiteral(lit, undefined);
             lastAssigned = lit;
         }
     }
