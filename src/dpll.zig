@@ -1,8 +1,8 @@
 const std = @import("std");
-const Bank = @import("ZAT").Bank;
-const Clauses = @import("ZAT").Clauses;
-const Variables = @import("ZAT").Variables;
-const LiteralDict = @import("ZAT").LiteralEpochDict;
+const Bank = @import("bank.zig");
+const Clauses = @import("clauses.zig");
+const Variables = @import("variables.zig");
+const LiteralDict = @import("datastructures/LiteralEpochDict.zig").LiteralEpochDict;
 
 const Reason = enum { pure, unit_propagation, assigned };
 const TrailFrame = struct {
