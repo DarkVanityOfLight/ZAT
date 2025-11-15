@@ -15,6 +15,10 @@ pub inline fn varOf(l: Literal) Variable {
     return @abs(l);
 }
 
+pub inline fn litOf(v: Variable) Literal {
+    return @intCast(v);
+}
+
 pub inline fn not(l: Literal) Literal {
-    return -1 * l;
+    return -l;
 }
