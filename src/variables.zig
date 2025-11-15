@@ -11,7 +11,7 @@ pub inline fn isNegative(l: Literal) bool {
     return l < 0;
 }
 
-pub inline fn variableFromLiteral(l: Literal) Variable {
+pub inline fn varOf(l: Literal) Variable {
     return @abs(l);
 }
 
