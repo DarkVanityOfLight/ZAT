@@ -1,6 +1,12 @@
 const std = @import("std");
 const Literal = @import("variables.zig").Literal;
 
+pub const Satisfiable = enum {
+    sat,
+    unsat,
+    unknown,
+};
+
 const ClausePosition = struct {
     start: usize,
     end: usize,
