@@ -14,6 +14,8 @@ const InvalidHeaderFormat = error{
     NoPreamble,
 };
 
+// FIXME: Does not accept comments as first line
+
 fn parse_first_line(line: []const u8) !CNFMeta {
     var tokens = std.mem.tokenizeAny(u8, line, " ");
 
@@ -37,11 +39,11 @@ fn parse_first_line(line: []const u8) !CNFMeta {
     return CNFMeta{ .clauses = num_clauses, .variables = num_variables };
 }
 
-fn parse_line(alloc: std.mem.Allocator, line: []const u8, cnf: *CNF) !void {
+fn parse_line(alloc: std.mem.Allocator, line: []const u8, cnf: *CNF) !bool {
     var content = std.mem.tokenizeAny(u8, line, " ");
 
-    if (content.peek() == null) return;
-    if (std.mem.eql(u8, content.peek().?, "c")) return;
+    if (content.peek() == null) return false;
+    if (std.mem.eql(u8, content.peek().?, "c")) return false;
 
     var literals = std.AutoHashMap(Literal, void).init(alloc);
     defer literals.deinit();
@@ -49,7 +51,7 @@ fn parse_line(alloc: std.mem.Allocator, line: []const u8, cnf: *CNF) !void {
     while (content.next()) |token| {
         if (std.mem.eql(u8, token, "0")) break;
         const lit = try std.fmt.parseInt(i32, token, 10);
-        if (literals.contains(not(lit))) return; // We have x and not x, this is a tautology
+        if (literals.contains(not(lit))) return true; // We have x and not x, this is a tautology
         try literals.put(lit, {});
     }
 
@@ -62,12 +64,24 @@ fn parse_line(alloc: std.mem.Allocator, line: []const u8, cnf: *CNF) !void {
         keys[i] = k.*;
     }
     try cnf.addClause(keys);
+    return true;
 }
 
 pub fn parse_dimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
     var lines = std.mem.tokenizeAny(u8, content, "\n");
     if (lines.peek() == null) return error.NoPreamble;
-    const cnf_meta = try parse_first_line(lines.next().?);
+
+    var line_opt = lines.next();
+    while (line_opt) |line| {
+        var tokens = std.mem.tokenizeAny(u8, line, " ");
+        if (tokens.peek() == null or std.mem.eql(u8, tokens.peek().?, "c")) {
+            line_opt = lines.next();
+            continue;
+        }
+        break;
+    }
+
+    const cnf_meta = try parse_first_line(line_opt.?);
 
     const cnf = try CNF.init(
         alloc,
@@ -75,8 +89,18 @@ pub fn parse_dimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
         cnf_meta.variables,
     );
 
+    var clause_count: usize = 0;
     while (lines.next()) |line| {
-        try parse_line(alloc, line, cnf);
+        if (clause_count >= cnf.num_clauses) {
+            break;
+        }
+        const success = parse_line(alloc, line, cnf) catch |err| blk: {
+            std.debug.print("{any} Could not parse line: {s}\n", .{ err, line });
+            break :blk false;
+        };
+        if (success) {
+            clause_count += 1;
+        }
     }
 
     return cnf;
