@@ -4,6 +4,7 @@ const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
 const LiteralDict = @import("datastructures/LiteralEpochDict.zig").LiteralEpochDict;
 
+//TODO: Make backtrack explicit
 const Reason = enum { pure, unit_propagation, assigned };
 const TrailFrame = struct {
     literal: Variables.Literal,
@@ -25,11 +26,11 @@ fn onTrail(trail: *Trail, lit: Variables.Literal) bool {
 }
 
 // Assume trail is in literalSet
-fn chooseLit(cnf: *Clauses.CNF, lastAssigned: ?Variables.Literal) ?Variables.Literal {
+fn chooseLit(cnf: *Clauses.CNF) ?Variables.Literal {
     var iter = cnf.aliveClauses();
     while (iter.next()) |clause| {
         for (clause) |literal| {
-            if (!literalSet.containsLiteral(literal) and lastAssigned != literal) return literal;
+            if (!(literalSet.containsLiteral(literal) or literalSet.containsLiteral(Variables.not(literal)))) return literal;
         }
     }
     return null;
@@ -111,20 +112,15 @@ fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
     const pureSet = try gpa.alloc(Pure, cnf.num_variables + 1);
     defer gpa.free(pureSet);
 
-    for (pureSet) |*e| {
-        const p = Pure{
-            .pos = false,
-            .neg = false,
-        };
-        e.* = p;
-    }
+    @memset(pureSet, Pure{ .pos = false, .neg = false });
 
     var flag = true;
     while (flag) : (flag = false) {
+        @memset(pureSet, Pure{ .pos = false, .neg = false });
         var iter = cnf.aliveClauses();
         while (iter.next()) |clause| {
             for (clause) |literal| {
-                var p: Pure = pureSet[Variables.varOf(literal)];
+                var p = &pureSet[Variables.varOf(literal)];
                 if (Variables.isPositive(literal)) {
                     p.pos = true;
                 } else {
@@ -134,7 +130,7 @@ fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
         }
 
         //TODO: Off by one?
-        for (1..cnf.num_variables) |i| {
+        for (1..(cnf.num_variables + 1)) |i| {
             const at = pureSet[i];
             if (!(at.pos and at.neg)) {
                 const lit = blk: {
@@ -171,19 +167,25 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Clauses.Satisfiable {
     var trail = Trail.init(gpaai);
     defer trail.deinit();
 
-    var lastAssigned: ?Variables.Literal = null;
     // Let's go
     while (true) {
         switch (checkCnf(cnf)) {
             // Found an assignment
-            .sat => return Clauses.Satisfiable.sat,
+            .sat => {
+                return Clauses.Satisfiable.sat;
+            },
             // Backtrack
             .unsat => {
-                if (trail.getLastOrNull() != null) {
-                    lastAssigned = popTrail(&trail);
-                } else if (lastAssigned != null) {
-                    // We assigned something, but still are at the end of the stack
-                    // unsat
+                const last_decision = popTrail(&trail);
+
+                if (last_decision) |decision_lit| {
+                    const flipped_lit = Variables.not(decision_lit);
+                    try trail.append(TrailFrame{
+                        .literal = flipped_lit,
+                        .reason = .unit_propagation,
+                    });
+                    literalSet.addLiteral(flipped_lit, undefined);
+                } else {
                     return Clauses.Satisfiable.unsat;
                 }
             },
@@ -194,10 +196,9 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Clauses.Satisfiable {
         try pureLiteral(gpaai, cnf, &trail);
 
         // Choose the next literal to assign
-        if (chooseLit(cnf, lastAssigned)) |lit| {
+        if (chooseLit(cnf)) |lit| {
             try trail.append(TrailFrame{ .literal = lit, .reason = Reason.assigned });
             literalSet.addLiteral(lit, undefined);
-            lastAssigned = lit;
         }
     }
 }
