@@ -46,7 +46,7 @@ pub const LiteralEpochDict = struct {
 
     pub fn removeLiteral(self: *@This(), lit: Literal) void {
         const idx: usize = if (lit > 0) self.one_index + @as(usize, @intCast(lit)) - 1 else @as(usize, @intCast(@abs(lit) - 1));
-        self.arr[idx].epoch -= 1;
+        self.arr[idx].epoch = 0;
         // Get as much safety as possible
         self.arr[idx].ptr = undefined;
     }
