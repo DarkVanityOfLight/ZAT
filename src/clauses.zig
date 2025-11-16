@@ -50,7 +50,6 @@ pub const CNF = struct {
             .alive = true,
         };
         try self.clauses.append(self.allocator, pos);
-        self.num_clauses += 1;
     }
 
     pub fn deleteClause(self: *CNF, clause_index: usize) void {
