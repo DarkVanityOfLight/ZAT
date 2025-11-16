@@ -15,12 +15,9 @@ pub fn run(ctx: zli.CommandContext) !void {
     const allocator = std.heap.page_allocator;
     const cnf = try DIMACS.read_dimacs(allocator, file_path);
 
+    const res = try ZAT.DPLL.dpll(allocator, cnf);
+
     // Do something with cnf
-    try ctx.writer.print("Loaded CNF from {s}\n", .{file_path});
-
-    const str = try cnf.toString(allocator);
-    defer allocator.free(str);
-
-    _ = try ctx.writer.write(str);
+    try ctx.writer.print("{any}\n", .{res});
     try ctx.writer.flush();
 }
