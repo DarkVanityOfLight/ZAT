@@ -2,7 +2,7 @@ const std = @import("std");
 const Bank = @import("bank.zig");
 const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
-const LiteralDict = @import("datastructures/LiteralEpochDict.zig").LiteralEpochDict;
+const EpochDict = @import("datastructures/EpochDict.zig");
 
 //TODO: Make backtrack explicit
 const Reason = enum { pure, unit_propagation, assigned };
@@ -16,14 +16,7 @@ const Trail = std.array_list.Managed(TrailFrame);
 // Everyone should clean up after themself
 // Be carefull with nested usages
 // This is scoped for the dpll function
-var literalSet: *LiteralDict = undefined;
-
-fn onTrail(trail: *Trail, lit: Variables.Literal) bool {
-    for (trail.items) |frame| {
-        if (frame.literal == lit) return true;
-    }
-    return false;
-}
+var literalSet: *EpochDict.LiteralEpochDict = undefined;
 
 // Assume trail is in literalSet
 fn chooseLit(cnf: *Clauses.CNF) ?Variables.Literal {
@@ -60,7 +53,6 @@ fn checkCnf(cnf: *Clauses.CNF) Clauses.Satisfiable {
     return Clauses.Satisfiable.sat;
 }
 
-// Returns unsat if the trail is poped to empty
 fn popTrail(trail: *Trail) ?Variables.Literal {
     while (trail.pop()) |frame| {
         literalSet.removeLiteral(frame.literal);
@@ -160,7 +152,7 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Clauses.Satisfiable {
     defer gpaa.deinit();
 
     // Initialize module wide epoch set
-    literalSet = try LiteralDict.init(gpaai, cnf.num_variables);
+    literalSet = try EpochDict.LiteralEpochDict.init(gpaai, cnf.num_variables);
     defer literalSet.deinit();
 
     // Init a trail

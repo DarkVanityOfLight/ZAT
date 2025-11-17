@@ -2,7 +2,6 @@ const std = @import("std");
 const CNF = @import("clauses.zig").CNF;
 const Literal = @import("variables.zig").Literal;
 const not = @import("variables.zig").not;
-const EpochSet = @import("EpochSet.zig");
 
 const TokenIterator = std.mem.TokenIterator;
 
