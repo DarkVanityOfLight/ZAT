@@ -2,6 +2,7 @@ const std = @import("std");
 const CNF = @import("clauses.zig").CNF;
 const Literal = @import("variables.zig").Literal;
 const not = @import("variables.zig").not;
+const EpochSet = @import("EpochSet.zig");
 
 const TokenIterator = std.mem.TokenIterator;
 
@@ -39,13 +40,13 @@ fn parse_first_line(line: []const u8) !CNFMeta {
     return CNFMeta{ .clauses = num_clauses, .variables = num_variables };
 }
 
-fn parse_line(alloc: std.mem.Allocator, line: []const u8, cnf: *CNF) !bool {
+fn parse_line(gpa: std.mem.Allocator, line: []const u8, cnf: *CNF) !bool {
     var content = std.mem.tokenizeAny(u8, line, " ");
 
     if (content.peek() == null) return false;
     if (std.mem.eql(u8, content.peek().?, "c")) return false;
 
-    var literals = std.AutoHashMap(Literal, void).init(alloc);
+    var literals = std.AutoHashMap(Literal, void).init(gpa);
     defer literals.deinit();
 
     while (content.next()) |token| {
@@ -55,8 +56,8 @@ fn parse_line(alloc: std.mem.Allocator, line: []const u8, cnf: *CNF) !bool {
         try literals.put(lit, {});
     }
 
-    const keys = try alloc.alloc(i32, literals.count());
-    defer alloc.free(keys);
+    const keys = try gpa.alloc(i32, literals.count());
+    defer gpa.free(keys);
 
     var it = literals.keyIterator();
     var i: usize = 0;
@@ -116,6 +117,13 @@ pub fn read_dimacs(
     const f = try std.fs.cwd().openFile(file, .{ .mode = .read_only });
     defer f.close();
 
-    const data = try f.readToEndAlloc(alloc, 1_000_000);
-    return try parse_dimacs(alloc, data);
+    const bufSize = (try f.stat()).size / @sizeOf(u8);
+    const buf = try alloc.alloc(u8, bufSize);
+    defer alloc.free(buf);
+
+    var r = std.fs.File.Reader.init(f, buf);
+    const d = try r.interface.readAlloc(alloc, try r.getSize());
+    defer alloc.free(d);
+
+    return try parse_dimacs(alloc, d);
 }
