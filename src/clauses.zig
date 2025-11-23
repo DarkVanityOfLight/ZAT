@@ -1,5 +1,6 @@
 const std = @import("std");
 const Literal = @import("variables.zig").Literal;
+const Watcher = @import("Watcher.zig").Watcher;
 
 pub const Satisfiable = enum {
     sat,
@@ -7,11 +8,13 @@ pub const Satisfiable = enum {
     unknown,
 };
 
-const ClausePosition = struct {
+pub const ClauseMeta = struct {
     start: usize,
     end: usize,
     capacity: usize,
     alive: bool,
+    watch1: ?Literal,
+    watch2: ?Literal,
 };
 
 pub const CNF = struct {
@@ -19,17 +22,19 @@ pub const CNF = struct {
     num_clauses: usize,
     num_variables: usize,
     literals: std.ArrayList(Literal),
-    clauses: std.ArrayList(ClausePosition),
+    clauses: std.ArrayList(ClauseMeta),
+    watcher: Watcher,
 
-    pub fn init(alloc: std.mem.Allocator, num_clauses: usize, num_variables: usize) !*CNF {
-        const cnf = try alloc.create(CNF);
+    pub fn init(gpa: std.mem.Allocator, num_clauses: usize, num_variables: usize) !*CNF {
+        const cnf = try gpa.create(CNF);
 
         cnf.* = CNF{
-            .allocator = alloc,
+            .allocator = gpa,
             .num_clauses = num_clauses,
             .num_variables = num_variables,
-            .literals = try std.ArrayList(Literal).initCapacity(alloc, num_variables * num_clauses),
-            .clauses = try std.ArrayList(ClausePosition).initCapacity(alloc, num_clauses * 2),
+            .literals = try std.ArrayList(Literal).initCapacity(gpa, num_variables * num_clauses),
+            .clauses = try std.ArrayList(ClauseMeta).initCapacity(gpa, num_clauses * 2),
+            .watcher = try Watcher.init(gpa, num_variables),
         };
         return cnf;
     }
@@ -37,24 +42,43 @@ pub const CNF = struct {
     pub fn deinit(self: *CNF) void {
         self.literals.deinit(self.allocator);
         self.clauses.deinit(self.allocator);
+        self.watcher.deinit();
+        self.allocator.destroy(self);
     }
 
     pub fn addClause(self: *CNF, new_literals: []Literal) !void {
         // append clause at the end of literals array
         const start = self.literals.items.len;
         try self.literals.appendSlice(self.allocator, new_literals);
-        const pos = ClausePosition{
+
+        var w1: ?Literal = null;
+        var w2: ?Literal = null;
+        if (new_literals.len >= 2) {
+            w1 = new_literals[0];
+            w2 = new_literals[1];
+        } else if (new_literals.len == 1) {
+            w1 = new_literals[0];
+        }
+
+        var pos = ClauseMeta{
             .start = start,
             .end = start + new_literals.len,
             .capacity = new_literals.len,
             .alive = true,
+            .watch1 = w1,
+            .watch2 = w2,
         };
         try self.clauses.append(self.allocator, pos);
+        try self.watcher.register(&pos);
     }
 
     pub fn deleteClause(self: *CNF, clause_index: usize) void {
         self.clauses.items[clause_index].alive = false;
         self.num_clauses -= 1;
+    }
+
+    pub fn getClause(self: *CNF, cMeta: ClauseMeta) []Literal {
+        return self.literals.items[cMeta.start..cMeta.end];
     }
 
     pub fn modifyClause(self: *CNF, clause_index: usize, new_literals: []Literal) !void {
