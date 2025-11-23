@@ -2,7 +2,8 @@ const std = @import("std");
 const Bank = @import("bank.zig");
 const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
-const EpochDict = @import("datastructures/EpochDict.zig");
+const LiteralDict = @import("datastructures/LiteralEpochDict.zig").LiteralEpochDict;
+const Result = @import("result.zig").Result;
 
 //TODO: Make backtrack explicit
 const Reason = enum { pure, unit_propagation, assigned };
@@ -16,7 +17,7 @@ const Trail = std.array_list.Managed(TrailFrame);
 // Everyone should clean up after themself
 // Be carefull with nested usages
 // This is scoped for the dpll function
-var literalSet: *EpochDict.LiteralEpochDict = undefined;
+var literalSet: *LiteralDict = undefined;
 
 // Assume trail is in literalSet
 fn chooseLit(cnf: *Clauses.CNF) ?Variables.Literal {
@@ -146,13 +147,22 @@ fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
     }
 }
 
-pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Clauses.Satisfiable {
+fn trailToArr(gpa: std.mem.Allocator, trail: Trail) ![]Variables.Literal {
+    const items = trail.items;
+    var res = try gpa.alloc(Variables.Literal, items.len);
+    for (items, 0..) |frame, i| {
+        res[i] = frame.literal;
+    }
+    return res;
+}
+
+pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
     var gpaa = std.heap.ArenaAllocator.init(gpa);
     const gpaai = gpaa.allocator();
     defer gpaa.deinit();
 
     // Initialize module wide epoch set
-    literalSet = try EpochDict.LiteralEpochDict.init(gpaai, cnf.num_variables);
+    literalSet = try LiteralDict.init(gpaai, cnf.num_variables);
     defer literalSet.deinit();
 
     // Init a trail
@@ -164,7 +174,7 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Clauses.Satisfiable {
         switch (checkCnf(cnf)) {
             // Found an assignment
             .sat => {
-                return Clauses.Satisfiable.sat;
+                return Result{ .sat = try trailToArr(gpa, trail) };
             },
             // Backtrack
             .unsat => {
@@ -178,7 +188,7 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Clauses.Satisfiable {
                     });
                     literalSet.addLiteral(flipped_lit, undefined);
                 } else {
-                    return Clauses.Satisfiable.unsat;
+                    return Result.unsat;
                 }
             },
             .unknown => {},
