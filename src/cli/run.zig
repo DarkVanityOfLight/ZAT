@@ -21,7 +21,7 @@ pub fn run(ctx: zli.CommandContext) !void {
         .sat => |assignment| {
             _ = try ctx.writer.write("s SATSIFIABLE\n");
 
-            _ = try ctx.writer.write("v");
+            _ = try ctx.writer.write("v ");
             for (assignment, 0..) |v, i| {
                 if (i != 0) _ = try ctx.writer.write(" ");
                 try ctx.writer.print("{d}", .{v});
