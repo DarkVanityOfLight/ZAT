@@ -2,7 +2,7 @@ const std = @import("std");
 const Bank = @import("bank.zig");
 const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
-const LiteralDict = @import("datastructures/LiteralEpochDict.zig").LiteralEpochDict;
+const LiteralDict = @import("datastructures/EpochDict.zig").LiteralEpochDict;
 const Result = @import("result.zig").Result;
 
 //TODO: Make backtrack explicit
@@ -13,6 +13,53 @@ const TrailFrame = struct {
 };
 
 const Trail = std.array_list.Managed(TrailFrame);
+
+fn extendTrail(self: *Trail, cnf: *Clauses.CNF, literal: Variables.Literal, reason: Reason) !void {
+    try self.append(TrailFrame{
+        .literal = literal,
+        .reason = reason,
+    });
+    literalSet.addLiteral(literal, undefined);
+
+    // Do the watching
+    const affected = cnf.watcher.watched(Variables.not(literal));
+    for (affected.items) |cMeta| {
+        if (!cMeta.alive) continue;
+
+        // We need to find and register a new watcher for the clause
+        // If the clause isn't already satisfied
+        if (literalSet.containsLiteral(cMeta.watch1) or literalSet.containsLiteral(cMeta.watch2)) continue;
+
+        var backup: ?Variables.Literal = null;
+
+        for (cnf.getClause(cMeta.*)) |lit| {
+            if (literalSet.containsLiteral(lit)) {
+                // This literal satisfies the clause, use it immediately
+                backup = lit;
+                break;
+            } else if (literalSet.containsLiteral(Variables.not(lit))) {
+                // literal is false, skip
+                continue;
+                // first unassigned literal, keep as backup, if not already the other watched literal
+            } else if (backup == null and (lit != cMeta.watch1 or cMeta.watch2 != lit)) {
+                backup = lit;
+            }
+        }
+
+        // TODO: Should I be checking here if the clause is unsat?
+        if (literal == cMeta.watch1) {
+            cMeta.watch1 = backup;
+        } else {
+            cMeta.watch2 = backup;
+        }
+
+        // Register with the new watcher
+        if (backup) |_| {
+            try cnf.watcher.modifyWatch(literal, cMeta, true);
+        }
+    }
+    affected.clearRetainingCapacity();
+}
 
 // Everyone should clean up after themself
 // Be carefull with nested usages
@@ -64,36 +111,30 @@ fn popTrail(trail: *Trail) ?Variables.Literal {
     return null;
 }
 
-fn unitPropagation(cnf: *Clauses.CNF, trail: *Trail) !void {
+fn watchedUnitPropagation(cnf: *Clauses.CNF, trail: *Trail) !Clauses.Satisfiable {
     var flag = true;
     while (flag) : (flag = false) {
-        var iter = cnf.aliveClauses();
-        while (iter.next()) |clause| {
-            var unassigned: ?Variables.Literal = null;
-            var unassigned_count: usize = 0;
-
-            for (clause) |literal| {
-                if (literalSet.containsLiteral(literal)) {
-                    // Clause satisfied
-                    unassigned_count = 0;
-                    break;
-                } else if (!literalSet.containsLiteral(Variables.not(literal))) {
-                    // Literal is unassigned
-                    unassigned = literal;
-                    unassigned_count += 1;
-                }
+        for (cnf.clauses.items) |cMeta| {
+            if (!cMeta.alive) {
+                continue;
             }
-
-            if (unassigned_count == 1 and unassigned != null) {
-                try trail.append(TrailFrame{
-                    .literal = unassigned.?,
-                    .reason = .unit_propagation,
-                });
-                literalSet.addLiteral(unassigned.?, undefined);
+            // Unit
+            if (cMeta.watch1 == null and cMeta.watch2 != null) {
                 flag = true;
+                if (literalSet.containsLiteral(Variables.not(cMeta.watch2.?))) return .unsat;
+                try extendTrail(trail, cnf, cMeta.watch2.?, .unit_propagation);
+            } else if (cMeta.watch2 == null and cMeta.watch1 != null) { // Unit
+                flag = true;
+                if (literalSet.containsLiteral(Variables.not(cMeta.watch1.?))) return .unsat;
+                try extendTrail(trail, cnf, cMeta.watch1.?, .unit_propagation);
+            } else if (cMeta.watch1 == null and cMeta.watch2 == null) { // Falsified
+                return .unsat;
+            } else { // No unit propagation
+                continue;
             }
         }
     }
+    return .unknown;
 }
 
 fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
@@ -135,11 +176,7 @@ fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
                 };
 
                 if (!literalSet.containsLiteral(lit)) {
-                    try trail.append(TrailFrame{
-                        .literal = lit,
-                        .reason = .pure,
-                    });
-                    literalSet.addLiteral(lit, undefined);
+                    try extendTrail(trail, cnf, lit, .pure);
                     flag = true;
                 }
             }
@@ -182,11 +219,7 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
 
                 if (last_decision) |decision_lit| {
                     const flipped_lit = Variables.not(decision_lit);
-                    try trail.append(TrailFrame{
-                        .literal = flipped_lit,
-                        .reason = .unit_propagation,
-                    });
-                    literalSet.addLiteral(flipped_lit, undefined);
+                    try extendTrail(&trail, cnf, flipped_lit, .unit_propagation);
                 } else {
                     return Result.unsat;
                 }
@@ -194,13 +227,16 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
             .unknown => {},
         }
         // Unknown: Keep on working
-        try unitPropagation(cnf, &trail);
+        const res = try watchedUnitPropagation(cnf, &trail);
+        if (res == .unsat) {
+            continue;
+        } // Unit propagation made a clause unsat
+
         try pureLiteral(gpaai, cnf, &trail);
 
         // Choose the next literal to assign
         if (chooseLit(cnf)) |lit| {
-            try trail.append(TrailFrame{ .literal = lit, .reason = Reason.assigned });
-            literalSet.addLiteral(lit, undefined);
+            try extendTrail(&trail, cnf, lit, Reason.assigned);
         }
     }
 }
