@@ -28,7 +28,7 @@ const EpochDict = struct {
     pub fn getAt(self: *@This(), comptime T: type, idx: usize) ?*T {
         const frame = self.arr[idx];
         if (frame.epoch == self.epoch) {
-            return @ptrCast(frame.ptr);
+            return @ptrCast(@alignCast(frame.ptr));
         } else {
             return null;
         }
@@ -87,8 +87,11 @@ pub const LiteralEpochDict = struct {
         self.dict.removeLiteral(idx);
     }
 
-    pub fn containsLiteral(self: *@This(), lit: Literal) bool {
-        const idx = self.indexOf(lit);
+    pub fn containsLiteral(self: *@This(), lit: ?Literal) bool {
+        if (lit == null) {
+            return false;
+        }
+        const idx = self.indexOf(lit.?);
         return self.dict.containsLiteral(idx);
     }
 
