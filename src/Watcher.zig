@@ -58,4 +58,11 @@ pub const Watcher = struct {
     pub fn watched(self: *@This(), literal: Literal) *Page {
         return self.book.getAt(Page, literal).?;
     }
+
+    pub fn moveWatch(self: *@This(), from: Literal, to: Literal, clause: *ClauseMeta) !void {
+        // This one is expensive
+        try self.modifyWatch(from, clause, false);
+        // This one is cheap
+        try self.modifyWatch(to, clause, true);
+    }
 };
