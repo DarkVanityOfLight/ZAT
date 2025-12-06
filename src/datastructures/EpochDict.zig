@@ -77,6 +77,17 @@ pub const LiteralEpochDict = struct {
         return idx;
     }
 
+    pub fn literalOf(self: *@This(), index: usize) Literal {
+        if (index >= self.one_index) {
+            // positive literal
+            return @intCast((index - self.one_index) + 1);
+        } else {
+            // negative literal
+            const l: Literal = @intCast(index + 1);
+            return -l;
+        }
+    }
+
     pub fn addLiteral(self: *@This(), lit: Literal, entry: *anyopaque) void {
         const idx = self.indexOf(lit);
         self.dict.addLiteral(idx, entry);
