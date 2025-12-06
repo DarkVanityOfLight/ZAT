@@ -5,33 +5,14 @@ const Variables = @import("variables.zig");
 const LiteralDict = @import("datastructures/EpochDict.zig").LiteralEpochDict;
 const Result = @import("result.zig").Result;
 
-const Reason = enum { pure, unit_propagation, assigned, backtracked };
-const TrailFrame = struct {
-    literal: Variables.Literal,
-    reason: Reason,
-};
-
-const Trail = std.array_list.Managed(TrailFrame);
-
-fn assign(literal: Variables.Literal, reason: Reason, trail: *Trail) !void {
-    try trail.append(TrailFrame{
-        .literal = literal,
-        .reason = reason,
-    });
-    literalSet.addLiteral(literal, undefined);
-}
-
-// Everyone should clean up after themself
-// Be carefull with nested usages
-// This is scoped for the dpll function
-var literalSet: *LiteralDict = undefined;
+const trail = @import("trail.zig");
 
 // Assume trail is in literalSet
 fn chooseLit(cnf: *Clauses.CNF) ?Variables.Literal {
     var iter = cnf.aliveClauses();
     while (iter.next()) |clause| {
         for (clause) |literal| {
-            if (!(literalSet.containsLiteral(literal) or literalSet.containsLiteral(Variables.not(literal)))) return literal;
+            if (!(trail.containsLiteral(literal) or trail.containsLiteral(Variables.not(literal)))) return literal;
         }
     }
     return null;
@@ -43,9 +24,9 @@ fn checkCnf(cnf: *Clauses.CNF) Clauses.Satisfiable {
     clauseIter: while (iter.next()) |clause| {
         var hasUnassignedVariable = false;
         for (clause) |literal| {
-            if (literalSet.containsLiteral(literal)) {
+            if (trail.containsLiteral(literal)) {
                 continue :clauseIter; // We have assigned a correct literal, clause is sat
-            } else if (!literalSet.containsLiteral(Variables.not(literal))) {
+            } else if (!trail.containsLiteral(Variables.not(literal))) {
                 hasUnassignedVariable = true; // Var is not assigned as true or false, so it isn't assigned
             }
         }
@@ -59,16 +40,6 @@ fn checkCnf(cnf: *Clauses.CNF) Clauses.Satisfiable {
     }
 
     return Clauses.Satisfiable.sat;
-}
-
-fn popTrail(trail: *Trail) ?Variables.Literal {
-    while (trail.pop()) |frame| {
-        literalSet.removeLiteral(frame.literal);
-        if (frame.reason == .assigned) {
-            return frame.literal;
-        }
-    }
-    return null;
 }
 
 inline fn getWatchedLiteral(cMeta: Clauses.ClauseMeta, watcher: bool) ?Variables.Literal {
@@ -86,14 +57,14 @@ fn moveWatch(cMeta: *Clauses.ClauseMeta, watcherToMove: bool, cnf: *Clauses.CNF)
     const watchedLiteral = getWatchedLiteral(cMeta.*, watcherToMove);
 
     for (cnf.getClause(cMeta.*)) |lit| {
-        if (literalSet.containsLiteral(lit)) {
+        if (trail.containsLiteral(lit)) {
             if (watcherToMove) {
                 cMeta.watch1 = lit;
             } else {
                 cMeta.watch2 = lit;
             }
             return true;
-        } else if (literalSet.containsLiteral(Variables.not(lit))) {
+        } else if (trail.containsLiteral(Variables.not(lit))) {
             // literal is false, skip
             continue;
         } else {
@@ -129,13 +100,13 @@ inline fn getWatcherSlot(cMeta: Clauses.ClauseMeta, literal: Variables.Literal) 
 }
 
 // Indicates if it could propagate everything or produced a conflict
-fn propagate(cnf: *Clauses.CNF, trail: *Trail) !bool {
-    if (trail.items.len == 0) return true;
-    var qHead = trail.items.len - 1;
+fn propagate(cnf: *Clauses.CNF) !bool {
+    if (trail.items().len == 0) return true;
+    var qHead = trail.items().len - 1;
 
     // While we haven't propageted everything we put on the trail
-    while (qHead < trail.items.len) : (qHead += 1) {
-        const literal = trail.items[qHead].literal;
+    while (qHead < trail.items().len) : (qHead += 1) {
+        const literal = trail.items()[qHead].literal;
 
         // Get the clauses that are watched by negation of the literal we are currently handeling
         const watched = cnf.watcher.watched(Variables.not(literal));
@@ -159,7 +130,7 @@ fn propagate(cnf: *Clauses.CNF, trail: *Trail) !bool {
 
             // Check if the watcher in the other slot is satsified
             const otherWatcherLiteral = getWatchedLiteral(clauseToMove.*, !movedWatcherSlot);
-            if (literalSet.containsLiteral(otherWatcherLiteral)) {
+            if (trail.containsLiteral(otherWatcherLiteral)) {
                 // If yes we can ignore this one
                 i += 1;
                 continue;
@@ -174,9 +145,9 @@ fn propagate(cnf: *Clauses.CNF, trail: *Trail) !bool {
                 // We could not move, either we set the other literal, or produce a conflict
 
                 // Can we set the other watcher?
-                if (otherWatcherLiteral != null and !literalSet.containsLiteral(Variables.not(otherWatcherLiteral.?))) {
+                if (otherWatcherLiteral != null and !trail.containsLiteral(Variables.not(otherWatcherLiteral.?))) {
                     // Yes => Extend the trail, and keep the current watch
-                    try assign(otherWatcherLiteral.?, .unit_propagation, trail);
+                    try trail.assign(otherWatcherLiteral.?, .unit_propagation);
                     i += 1; // This clause is done and stays in the list
                 } else {
                     // No => conflict
@@ -189,7 +160,7 @@ fn propagate(cnf: *Clauses.CNF, trail: *Trail) !bool {
     return true;
 }
 
-fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
+fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !void {
     const Pure = struct {
         pos: bool,
         neg: bool,
@@ -226,8 +197,8 @@ fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
                     }
                 };
 
-                if (!literalSet.containsLiteral(lit)) {
-                    try assign(lit, .pure, trail);
+                if (!trail.containsLiteral(lit)) {
+                    try trail.assign(lit, .pure);
                     flag = true;
                 }
             }
@@ -235,26 +206,13 @@ fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF, trail: *Trail) !void {
     }
 }
 
-fn trailToArr(gpa: std.mem.Allocator, trail: Trail) ![]Variables.Literal {
-    const items = trail.items;
-    var res = try gpa.alloc(Variables.Literal, items.len);
-    for (items, 0..) |frame, i| {
-        res[i] = frame.literal;
-    }
-    return res;
-}
-
 pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
     var gpaa = std.heap.ArenaAllocator.init(gpa);
     const gpaai = gpaa.allocator();
     defer gpaa.deinit();
 
-    // Initialize module wide epoch set
-    literalSet = try LiteralDict.init(gpaai, cnf.num_variables);
-    defer literalSet.deinit();
-
-    // Init a trail
-    var trail = Trail.init(gpaai);
+    // Initialize trail
+    try trail.init(gpaai, cnf.num_variables);
     defer trail.deinit();
 
     // TODO: Handle unit propagations at level 0
@@ -264,15 +222,15 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
         switch (checkCnf(cnf)) {
             // Found an assignment
             .sat => {
-                return Result{ .sat = try trailToArr(gpa, trail) };
+                return Result{ .sat = try trail.toArr(gpa) };
             },
             // Backtrack
             .unsat => {
-                const last_decision = popTrail(&trail);
+                const last_decision = trail.pop();
 
                 if (last_decision) |decision_lit| {
                     const flipped_lit = Variables.not(decision_lit);
-                    try assign(flipped_lit, .backtracked, &trail);
+                    try trail.assign(flipped_lit, .backtracked);
                 } else {
                     return Result.unsat;
                 }
@@ -282,20 +240,20 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
         // Unknown: Keep on working
 
         // Check for new unit propagations after assignment
-        const res1 = try propagate(cnf, &trail);
+        const res1 = try propagate(cnf);
         if (!res1) {
             continue; // Conflict
         }
 
-        try pureLiteral(gpaai, cnf, &trail); // TODO: This will be removed later
-        const res2 = try propagate(cnf, &trail);
+        try pureLiteral(gpaai, cnf); // TODO: This will be removed later
+        const res2 = try propagate(cnf);
         if (!res2) {
             continue; // Conflict
         }
 
         // Choose the next literal to assign
         if (chooseLit(cnf)) |lit| {
-            try assign(lit, .assigned, &trail);
+            try trail.assign(lit, .assigned);
         }
     }
 }
