@@ -2,6 +2,7 @@ const std = @import("std");
 const CNF = @import("clauses.zig").CNF;
 const Literal = @import("variables.zig").Literal;
 const not = @import("variables.zig").not;
+const LiteralSet = @import("datastructures/EpochDict.zig").LiteralEpochDict;
 
 const TokenIterator = std.mem.TokenIterator;
 
@@ -14,7 +15,8 @@ const InvalidHeaderFormat = error{
     NoPreamble,
 };
 
-// FIXME: Does not accept comments as first line
+var literalSet: *LiteralSet = undefined;
+var clause: std.array_list.Managed(Literal) = undefined;
 
 fn parse_first_line(line: []const u8) !CNFMeta {
     var tokens = std.mem.tokenizeAny(u8, line, " ");
@@ -39,31 +41,21 @@ fn parse_first_line(line: []const u8) !CNFMeta {
     return CNFMeta{ .clauses = num_clauses, .variables = num_variables };
 }
 
-fn parse_line(gpa: std.mem.Allocator, line: []const u8, cnf: *CNF) !bool {
+fn parse_line(line: []const u8, cnf: *CNF) !bool {
     var content = std.mem.tokenizeAny(u8, line, " ");
 
     if (content.peek() == null) return false;
     if (std.mem.eql(u8, content.peek().?, "c")) return false;
 
-    var literals = std.AutoHashMap(Literal, void).init(gpa);
-    defer literals.deinit();
-
     while (content.next()) |token| {
         if (std.mem.eql(u8, token, "0")) break;
         const lit = try std.fmt.parseInt(i32, token, 10);
-        if (literals.contains(not(lit))) return true; // We have x and not x, this is a tautology
-        try literals.put(lit, {});
+        if (literalSet.containsLiteral(not(lit))) return true; // We have x and not x, this is a tautology
+        literalSet.addLiteral(lit, undefined);
+        try clause.append(lit);
     }
 
-    const keys = try gpa.alloc(i32, literals.count());
-    defer gpa.free(keys);
-
-    var it = literals.keyIterator();
-    var i: usize = 0;
-    while (it.next()) |k| : (i += 1) {
-        keys[i] = k.*;
-    }
-    try cnf.addClause(keys);
+    try cnf.addClause(clause.items);
     return true;
 }
 
@@ -89,20 +81,28 @@ pub fn parse_dimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
         cnf_meta.variables,
     );
 
+    literalSet = try LiteralSet.init(alloc, cnf.num_variables);
+    defer literalSet.deinit();
+
+    clause = std.array_list.Managed(Literal).init(alloc);
+    defer clause.deinit();
+
     var clause_count: usize = 0;
+    std.debug.print("{d}", .{cnf.num_clauses});
     while (lines.next()) |line| {
         if (clause_count >= cnf.num_clauses) {
             break;
         }
-        const success = parse_line(alloc, line, cnf) catch |err| blk: {
+        const success = parse_line(line, cnf) catch |err| blk: {
             std.debug.print("{any} Could not parse line: {s}\n", .{ err, line });
             break :blk false;
         };
         if (success) {
             clause_count += 1;
         }
+        literalSet.reset();
+        clause.clearRetainingCapacity();
     }
-
     return cnf;
 }
 
