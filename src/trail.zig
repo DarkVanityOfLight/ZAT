@@ -6,7 +6,11 @@ const LiteralDict = @import("datastructures/EpochDict.zig").LiteralEpochDict;
 const Result = @import("result.zig").Result;
 
 const TrailStack = std.array_list.Managed(TrailFrame);
-const Reason = enum { pure, unit_propagation, assigned, backtracked };
+const Reason = union(enum) {
+    unit_propagation: *Clauses.ClauseMeta,
+    assigned,
+    backtracked,
+};
 const TrailFrame = struct {
     literal: Variables.Literal,
     reason: Reason,

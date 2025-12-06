@@ -132,7 +132,7 @@ fn propagate(cnf: *Clauses.CNF) !bool {
                 // Can we set the other watcher?
                 if (otherWatcherLiteral != null and !trail.containsLiteral(Variables.not(otherWatcherLiteral.?))) {
                     // Yes => Extend the trail, and keep the current watch
-                    try trail.assign(otherWatcherLiteral.?, .unit_propagation);
+                    try trail.assign(otherWatcherLiteral.?, .{ .unit_propagation = clauseToMove });
                     i += 1; // This clause is done and stays in the list
                 } else {
                     // No => conflict
@@ -179,8 +179,8 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
         // Unknown: Keep on working
 
         // Check for new unit propagations after assignment
-        const res1 = try propagate(cnf);
-        if (!res1) {
+        const res = try propagate(cnf);
+        if (!res) {
             continue; // Conflict
         }
 
