@@ -115,8 +115,7 @@ fn propagate(cnf: *Clauses.CNF) !bool {
             }
 
             // Get the slot the current watcher is in
-            std.debug.print("{any}\n", .{clauseToMove});
-            const movedWatcherSlot = getWatcherSlot(clauseToMove.*, literal).?;
+            const movedWatcherSlot = getWatcherSlot(clauseToMove.*, Variables.not(literal)).?;
 
             // Check if the watcher in the other slot is satsified
             const otherWatcherLiteral = getWatchedLiteral(clauseToMove.*, !movedWatcherSlot);
