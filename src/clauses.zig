@@ -22,8 +22,9 @@ pub const CNF = struct {
     num_clauses: usize,
     num_variables: usize,
     literals: std.ArrayList(Literal),
-    clauses: std.ArrayList(ClauseMeta),
+    clauses: std.ArrayList(*ClauseMeta),
     watcher: Watcher,
+    arena: std.heap.ArenaAllocator,
 
     pub fn init(gpa: std.mem.Allocator, num_clauses: usize, num_variables: usize) !*CNF {
         const cnf = try gpa.create(CNF);
@@ -33,13 +34,15 @@ pub const CNF = struct {
             .num_clauses = num_clauses,
             .num_variables = num_variables,
             .literals = try std.ArrayList(Literal).initCapacity(gpa, num_clauses * 2),
-            .clauses = try std.ArrayList(ClauseMeta).initCapacity(gpa, num_clauses * 2),
+            .clauses = try std.ArrayList(*ClauseMeta).initCapacity(gpa, num_clauses * 2),
             .watcher = try Watcher.init(gpa, num_variables),
+            .arena = std.heap.ArenaAllocator.init(gpa),
         };
         return cnf;
     }
 
     pub fn deinit(self: *CNF) void {
+        self.arena.deinit();
         self.literals.deinit(self.allocator);
         self.clauses.deinit(self.allocator);
         self.watcher.deinit();
@@ -60,7 +63,9 @@ pub const CNF = struct {
             w1 = new_literals[0];
         }
 
-        var pos = ClauseMeta{
+        const meta_ptr = try self.arena.allocator().create(ClauseMeta);
+
+        meta_ptr.* = ClauseMeta{
             .start = start,
             .end = start + new_literals.len,
             .capacity = new_literals.len,
@@ -68,8 +73,8 @@ pub const CNF = struct {
             .watch1 = w1,
             .watch2 = w2,
         };
-        try self.clauses.append(self.allocator, pos);
-        try self.watcher.register(&pos);
+        try self.clauses.append(self.allocator, meta_ptr);
+        try self.watcher.register(meta_ptr);
     }
 
     pub fn deleteClause(self: *CNF, clause_index: usize) void {
@@ -102,6 +107,9 @@ pub const CNF = struct {
 
     pub fn aliveClauses(self: *CNF) AliveClauseIter {
         return AliveClauseIter{ .cnf = self, .index = 0 };
+    }
+    pub fn aliveClausesMeta(self: *CNF) AliveClauseMetaIter {
+        return AliveClauseMetaIter{ .cnf = self, .index = 0 };
     }
 
     pub fn toString(self: *CNF, allocator: std.mem.Allocator) ![]u8 {
@@ -158,6 +166,37 @@ const AliveClauseIter = struct {
     }
 
     pub fn peek(self: *AliveClauseIter) ?[]Literal {
+        return self.findNext(self.index);
+    }
+};
+
+const AliveClauseMetaIter = struct {
+    cnf: *CNF,
+    index: usize,
+
+    fn findNext(self: *AliveClauseMetaIter, startIndex: usize) ?*ClauseMeta {
+        var i = startIndex;
+        while (i < self.cnf.clauses.items.len) : (i += 1) {
+            const meta_ptr = &self.cnf.clauses.items[i];
+            if (meta_ptr.alive) {
+                return meta_ptr;
+            }
+        }
+        return null;
+    }
+
+    pub fn next(self: *AliveClauseMetaIter) ?*ClauseMeta {
+        while (self.index < self.cnf.clauses.items.len) {
+            const meta_ptr = self.cnf.clauses.items[self.index];
+            self.index += 1;
+            if (meta_ptr.alive) {
+                return meta_ptr;
+            }
+        }
+        return null;
+    }
+
+    pub fn peek(self: *AliveClauseMetaIter) ?*ClauseMeta {
         return self.findNext(self.index);
     }
 };
