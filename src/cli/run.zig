@@ -15,7 +15,7 @@ pub fn run(ctx: zli.CommandContext) !void {
     const gpa = std.heap.page_allocator;
     var timer = try std.time.Timer.start();
 
-    const cnf = try DIMACS.read_dimacs(gpa, file_path);
+    const cnf = try DIMACS.readDimacs(gpa, file_path);
 
     try ctx.writer.print("c Finished parsing in {d} ms\n", .{@divFloor(timer.lap(), std.time.ns_per_ms)});
 
@@ -23,6 +23,7 @@ pub fn run(ctx: zli.CommandContext) !void {
 
     switch (res) {
         .sat => |assignment| {
+            std.mem.sort(i32, assignment, {}, comptime std.sort.asc(i32));
             _ = try ctx.writer.write("s SATSIFIABLE\n");
 
             _ = try ctx.writer.write("v ");
