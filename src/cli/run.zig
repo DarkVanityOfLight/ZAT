@@ -15,6 +15,9 @@ pub fn run(ctx: zli.CommandContext) !void {
     const gpa = std.heap.page_allocator;
     const cnf = try DIMACS.read_dimacs(gpa, file_path);
 
+    _ = try ctx.writer.write("c Finished parsing\n");
+    try ctx.writer.flush();
+
     const res = try ZAT.DPLL.dpll(gpa, cnf);
 
     switch (res) {
