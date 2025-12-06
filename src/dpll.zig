@@ -43,11 +43,11 @@ fn checkCnf(cnf: *Clauses.CNF) Clauses.Satisfiable {
 }
 
 inline fn getWatchedLiteral(cMeta: Clauses.ClauseMeta, watcher: bool) ?Variables.Literal {
-    if (watcher) {
-        return cMeta.watch1;
-    } else {
-        return cMeta.watch2;
-    }
+    return if (watcher) cMeta.watch1 else cMeta.watch2;
+}
+
+inline fn getWatcherSlot(cMeta: Clauses.ClauseMeta, literal: Variables.Literal) ?bool {
+    return if (cMeta.watch1 == literal) true else if (cMeta.watch2 == literal) false else null;
 }
 
 // Indicates success to move
@@ -86,16 +86,6 @@ fn moveWatch(cMeta: *Clauses.ClauseMeta, watcherToMove: bool, cnf: *Clauses.CNF)
         return true; // Could move watch
     } else {
         return false; // Could not move watch
-    }
-}
-
-inline fn getWatcherSlot(cMeta: Clauses.ClauseMeta, literal: Variables.Literal) ?bool {
-    if (cMeta.watch1 == literal) {
-        return true;
-    } else if (cMeta.watch2 == literal) {
-        return false;
-    } else {
-        return null;
     }
 }
 
