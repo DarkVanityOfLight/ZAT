@@ -150,52 +150,6 @@ fn propagate(cnf: *Clauses.CNF) !bool {
     return true;
 }
 
-fn pureLiteral(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !void {
-    const Pure = struct {
-        pos: bool,
-        neg: bool,
-    };
-
-    const pureSet = try gpa.alloc(Pure, cnf.num_variables + 1);
-    defer gpa.free(pureSet);
-
-    @memset(pureSet, Pure{ .pos = false, .neg = false });
-
-    var flag = true;
-    while (flag) : (flag = false) {
-        @memset(pureSet, Pure{ .pos = false, .neg = false });
-        var iter = cnf.aliveClauses();
-        while (iter.next()) |clause| {
-            for (clause) |literal| {
-                var p = &pureSet[Variables.varOf(literal)];
-                if (Variables.isPositive(literal)) {
-                    p.pos = true;
-                } else {
-                    p.neg = true;
-                }
-            }
-        }
-
-        for (1..(cnf.num_variables + 1)) |i| {
-            const at = pureSet[i];
-            if (!(at.pos and at.neg)) {
-                const lit = blk: {
-                    if (at.pos) {
-                        break :blk Variables.litOf(@intCast(i));
-                    } else {
-                        break :blk Variables.not(Variables.litOf(@intCast(i)));
-                    }
-                };
-
-                if (!trail.containsLiteral(lit)) {
-                    try trail.assign(lit, .pure);
-                    flag = true;
-                }
-            }
-        }
-    }
-}
-
 pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
     var gpaa = std.heap.ArenaAllocator.init(gpa);
     const gpaai = gpaa.allocator();
@@ -232,12 +186,6 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
         // Check for new unit propagations after assignment
         const res1 = try propagate(cnf);
         if (!res1) {
-            continue; // Conflict
-        }
-
-        try pureLiteral(gpaai, cnf); // TODO: This will be removed later
-        const res2 = try propagate(cnf);
-        if (!res2) {
             continue; // Conflict
         }
 
