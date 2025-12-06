@@ -58,12 +58,8 @@ fn moveWatch(cMeta: *Clauses.ClauseMeta, watcherToMove: bool, cnf: *Clauses.CNF)
 
     for (cnf.getClause(cMeta.*)) |lit| {
         if (trail.containsLiteral(lit)) {
-            if (watcherToMove) {
-                cMeta.watch1 = lit;
-            } else {
-                cMeta.watch2 = lit;
-            }
-            return true;
+            backup = lit;
+            break;
         } else if (trail.containsLiteral(Variables.not(lit))) {
             // literal is false, skip
             continue;
