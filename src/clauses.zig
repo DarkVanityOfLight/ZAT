@@ -32,7 +32,7 @@ pub const CNF = struct {
             .allocator = gpa,
             .num_clauses = num_clauses,
             .num_variables = num_variables,
-            .literals = try std.ArrayList(Literal).initCapacity(gpa, num_variables * num_clauses),
+            .literals = try std.ArrayList(Literal).initCapacity(gpa, num_clauses * 2),
             .clauses = try std.ArrayList(ClauseMeta).initCapacity(gpa, num_clauses * 2),
             .watcher = try Watcher.init(gpa, num_variables),
         };
