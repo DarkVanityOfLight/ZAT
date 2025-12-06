@@ -18,28 +18,28 @@ fn chooseLit(cnf: *Clauses.CNF) ?Variables.Literal {
     return null;
 }
 
-// Assume trail is in literalSet
 fn checkCnf(cnf: *Clauses.CNF) Clauses.Satisfiable {
-    var iter = cnf.aliveClauses();
-    clauseIter: while (iter.next()) |clause| {
-        var hasUnassignedVariable = false;
-        for (clause) |literal| {
-            if (trail.containsLiteral(literal)) {
-                continue :clauseIter; // We have assigned a correct literal, clause is sat
-            } else if (!trail.containsLiteral(Variables.not(literal))) {
-                hasUnassignedVariable = true; // Var is not assigned as true or false, so it isn't assigned
-            }
-        }
+    var iter = cnf.aliveClausesMeta();
 
-        if (hasUnassignedVariable) {
-            // Not satisfied but still variables left to assign
-            return Clauses.Satisfiable.unknown;
-        } else {
-            return Clauses.Satisfiable.unsat; // No variables more to assign, and it isn't satisified
-        }
+    var all_satisfied = true;
+    while (iter.next()) |clause| {
+        const w1 = clause.watch1;
+        const w2 = clause.watch2;
+
+        const satisfied =
+            (w1 != null and trail.containsLiteral(w1.?)) or
+            (w2 != null and trail.containsLiteral(w2.?));
+
+        if (satisfied) continue;
+
+        if ((w1 == null or trail.containsLiteral(Variables.notMaybe(w1))) and
+            (w2 == null or trail.containsLiteral(Variables.notMaybe(w2))))
+            return .unsat;
+
+        // TODO: The clause might still contain a satisified literal, not currently watched
+        all_satisfied = false;
     }
-
-    return Clauses.Satisfiable.sat;
+    return if (all_satisfied) .sat else .unknown;
 }
 
 inline fn getWatchedLiteral(cMeta: Clauses.ClauseMeta, watcher: bool) ?Variables.Literal {
