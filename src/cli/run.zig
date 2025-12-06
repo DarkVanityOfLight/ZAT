@@ -13,10 +13,11 @@ pub fn run(ctx: zli.CommandContext) !void {
     };
 
     const gpa = std.heap.page_allocator;
+    var timer = try std.time.Timer.start();
+
     const cnf = try DIMACS.read_dimacs(gpa, file_path);
 
-    _ = try ctx.writer.write("c Finished parsing\n");
-    try ctx.writer.flush();
+    try ctx.writer.print("c Finished parsing in {d} ms\n", .{@divFloor(timer.lap(), std.time.ns_per_ms)});
 
     const res = try ZAT.DPLL.dpll(gpa, cnf);
 
@@ -35,6 +36,6 @@ pub fn run(ctx: zli.CommandContext) !void {
         .unsat => _ = try ctx.writer.write("s UNSATISFIABLE\n"),
         .unknown => _ = try ctx.writer.write("s UNKNOWN\n"),
     }
-
+    try ctx.writer.print("c Finished solving in {d} ms\n", .{@divTrunc(timer.lap(), std.time.ns_per_ms)});
     try ctx.writer.flush();
 }
