@@ -88,7 +88,6 @@ pub fn parse_dimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
     defer clause.deinit();
 
     var clause_count: usize = 0;
-    std.debug.print("{d}", .{cnf.num_clauses});
     while (lines.next()) |line| {
         if (clause_count >= cnf.num_clauses) {
             break;
