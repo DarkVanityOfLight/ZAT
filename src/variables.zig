@@ -22,3 +22,7 @@ pub inline fn litOf(v: Variable) Literal {
 pub inline fn not(l: Literal) Literal {
     return -l;
 }
+
+pub inline fn notMaybe(l: ?Literal) ?Literal {
+    return if (l) |x| not(x) else null;
+}
