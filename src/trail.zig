@@ -1,66 +1,99 @@
 const std = @import("std");
-const Bank = @import("bank.zig");
 const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
-const LiteralDict = @import("datastructures/EpochDict.zig").LiteralEpochDict;
-const Result = @import("result.zig").Result;
+const Literal = Variables.Literal;
 
-const TrailStack = std.array_list.Managed(TrailFrame);
-const Reason = union(enum) {
+const LiteralEpochDict = @import("datastructures/EpochDict.zig").LiteralEpochDict;
+
+const AssignmentSet = LiteralEpochDict(usize);
+
+pub const Reason = union(enum) {
     unit_propagation: *Clauses.ClauseMeta,
-    assigned,
+    assigned, // Represents a Decision
     backtracked,
 };
-const TrailFrame = struct {
-    literal: Variables.Literal,
+
+pub const TrailFrame = struct {
+    literal: Literal,
     reason: Reason,
+    level: usize,
 };
 
-pub var literalSet: *LiteralDict = undefined;
-pub var trailStack: TrailStack = undefined;
+pub const Trail = struct {
+    stack: std.array_list.Managed(TrailFrame),
+    assignments: *AssignmentSet,
+    current_level: usize,
+    allocator: std.mem.Allocator,
 
-pub fn assign(literal: Variables.Literal, reason: Reason) !void {
-    try trailStack.append(TrailFrame{
-        .literal = literal,
-        .reason = reason,
-    });
-    literalSet.addLiteral(literal, undefined);
-}
+    pub fn init(alloc: std.mem.Allocator, num_vars: usize) !*Trail {
+        const self = try alloc.create(Trail);
+        self.* = Trail{
+            .stack = std.array_list.Managed(TrailFrame).init(alloc),
+            .assignments = try AssignmentSet.init(alloc, num_vars),
+            .current_level = 0,
+            .allocator = alloc,
+        };
+        return self;
+    }
 
-pub fn pop() ?Variables.Literal {
-    while (trailStack.pop()) |frame| {
-        literalSet.removeLiteral(frame.literal);
-        if (frame.reason == .assigned) {
-            return frame.literal;
+    pub fn deinit(self: *Trail) void {
+        self.stack.deinit();
+        self.assignments.deinit();
+        self.allocator.destroy(self);
+    }
+
+    pub fn assign(self: *Trail, literal: Literal, reason: Reason) !void {
+        if (reason == .assigned) {
+            self.current_level += 1;
         }
+
+        try self.stack.append(TrailFrame{
+            .literal = literal,
+            .reason = reason,
+            .level = self.current_level,
+        });
+
+        self.assignments.set(literal, self.current_level);
     }
-    return null;
-}
 
-pub fn toArr(gpa: std.mem.Allocator) ![]Variables.Literal {
-    var res = try gpa.alloc(Variables.Literal, items().len);
-    for (items(), 0..) |frame, i| {
-        res[i] = frame.literal;
+    /// Backtracks until it undoes the last Decision (.assigned).
+    /// Returns the decision literal that triggered the level,
+    /// or null if the stack is empty.
+    pub fn pop(self: *Trail) ?Literal {
+        while (self.stack.pop()) |frame| {
+            // Remove from fast lookup
+            self.assignments.unset(frame.literal);
+
+            if (frame.reason == .assigned) {
+                self.current_level -= 1;
+                return frame.literal;
+            }
+        }
+        return null;
     }
-    return res;
-}
 
-pub inline fn items() []TrailFrame {
-    return trailStack.items;
-}
+    /// Fast O(1) check if a literal is currently on the trail
+    pub inline fn contains(self: *Trail, lit: ?Literal) bool {
+        return self.assignments.contains(lit);
+    }
 
-pub inline fn containsLiteral(lit: ?Variables.Literal) bool {
-    return literalSet.containsLiteral(lit);
-}
+    pub inline fn items(self: *Trail) []TrailFrame {
+        return self.stack.items;
+    }
 
-pub fn init(gpa: std.mem.Allocator, num_vars: usize) !void {
-    trailStack = TrailStack.init(gpa);
-    literalSet = try LiteralDict.init(gpa, num_vars);
-}
+    /// Helper to get just the literals as a slice (caller owns memory)
+    pub fn toLiteralArray(self: *Trail) ![]Literal {
+        const res = try self.allocator.alloc(Literal, self.stack.items.len);
+        for (self.stack.items, 0..) |frame, i| {
+            res[i] = frame.literal;
+        }
+        return res;
+    }
 
-pub fn deinit() void {
-    trailStack.deinit();
-    trailStack = undefined;
-    literalSet.deinit();
-    literalSet = undefined;
-}
+    /// Resets the trail completely (Level 0)
+    pub fn reset(self: *Trail) void {
+        self.stack.clearRetainingCapacity();
+        self.assignments.reset();
+        self.current_level = 0;
+    }
+};
