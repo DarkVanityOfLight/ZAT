@@ -43,10 +43,12 @@ fn extendTrail(self: *Trail, cnf: *Clauses.CNF, literal: Variables.Literal, reas
                 // first unassigned literal, keep as backup, if not already the other watched literal
             } else if (backup == null and (lit != cMeta.watch1 or cMeta.watch2 != lit)) {
                 backup = lit;
+                break; // FIXME: This could be wrong
             }
         }
 
         // TODO: Should I be checking here if the clause is unsat?
+        // FIXME: Leave watch be
         if (literal == cMeta.watch1) {
             cMeta.watch1 = backup;
         } else {
@@ -58,6 +60,7 @@ fn extendTrail(self: *Trail, cnf: *Clauses.CNF, literal: Variables.Literal, reas
             try cnf.watcher.modifyWatch(literal, cMeta, true);
         }
     }
+    //FIXME: If we leave watches  don't full clear, only clear till conflict
     affected.clearRetainingCapacity();
 }
 
@@ -111,6 +114,7 @@ fn popTrail(trail: *Trail) ?Variables.Literal {
     return null;
 }
 
+// FIXME: Two pointer trail,
 fn watchedUnitPropagation(cnf: *Clauses.CNF, trail: *Trail) !Clauses.Satisfiable {
     var flag = true;
     while (flag) : (flag = false) {
@@ -119,6 +123,7 @@ fn watchedUnitPropagation(cnf: *Clauses.CNF, trail: *Trail) !Clauses.Satisfiable
                 continue;
             }
             // Unit
+            //FIXME: Check satisfied
             if (cMeta.watch1 == null and cMeta.watch2 != null) {
                 flag = true;
                 if (literalSet.containsLiteral(Variables.not(cMeta.watch2.?))) return .unsat;
