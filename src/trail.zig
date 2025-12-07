@@ -20,7 +20,7 @@ pub const TrailFrame = struct {
 };
 
 pub const Trail = struct {
-    stack: std.array_list.Managed(TrailFrame),
+    stack: std.array_list.Managed(TrailFrame), // TODO: Deprecated, we have the allocator anyways
     assignments: *AssignmentSet,
     current_level: usize,
     allocator: std.mem.Allocator,
@@ -95,5 +95,20 @@ pub const Trail = struct {
         self.stack.clearRetainingCapacity();
         self.assignments.reset();
         self.current_level = 0;
+    }
+
+    pub fn backtrack(self: *Trail, decision_level: usize) void {
+        while (self.stack.items.len > 0) {
+            const frame = self.stack.items[self.stack.items.len - 1];
+
+            if (frame.level <= decision_level) {
+                // Stop at the first frame at or below the target level
+                break;
+            }
+
+            _ = self.stack.pop(); // We know it isn't empty
+            if (frame.reason == .assigned) self.current_level -= 1;
+            self.assignments.unset(frame.literal);
+        }
     }
 };
