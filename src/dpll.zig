@@ -4,6 +4,8 @@ const Variables = @import("variables.zig");
 const Trail = @import("trail.zig").Trail;
 const Result = @import("result.zig").Result;
 
+const ClauseSet = @import("datastructures/EpochDict.zig").LiteralEpochDict(void);
+
 const Literal = Variables.Literal;
 
 /// Helper to get the literal currently watched by the specific slot (1 or 2)
@@ -140,11 +142,143 @@ fn chooseLit(trail: *Trail, cnf: *Clauses.CNF) ?Variables.Literal {
     return null;
 }
 
+const ConflictData = struct {
+    backtrack_level: usize,
+    uip: Literal,
+    second_watch: ?Literal, // Null if the learned clause is unit (size 1)
+};
+
+fn conflictAnalysis(
+    conflict: *Clauses.ClauseMeta,
+    trail: *Trail,
+    cnf: *Clauses.CNF,
+    learningClause: *ClauseSet,
+) ConflictData {
+    const conflict_clause = cnf.getClause(conflict.*);
+
+    var at_current_level: usize = 0;
+
+    // Variables for finding the second highest level
+    var max_level: usize = 0;
+    var second_watch_lit: ?Literal = null;
+
+    // 1. Initialize with the current conflicting clause
+    for (conflict_clause) |literal| {
+        // Only process if not already in the set
+        if (!learningClause.contains(literal)) {
+            learningClause.set(literal, undefined);
+
+            const lvl = trail.assignments.getValue(Variables.not(literal)).?; // Variable level
+
+            if (lvl == trail.current_level) {
+                at_current_level += 1;
+            } else if (lvl > max_level) {
+                max_level = lvl;
+                second_watch_lit = literal;
+            } else if (second_watch_lit == null) {
+                // Determine a second watch even if level is 0 or same as max_level
+                second_watch_lit = literal;
+            }
+        }
+    }
+
+    // 2. Iterate backwards (Resolution) to find 1-UIP
+    var index = trail.stack.items.len - 1;
+
+    while (at_current_level > 1) : (index -= 1) {
+        const entry = trail.stack.items[index];
+        const conflict_lit = Variables.not(entry.literal);
+
+        if (!learningClause.contains(conflict_lit)) continue;
+
+        // Remove the literal we are resolving on
+        learningClause.unset(conflict_lit);
+        at_current_level -= 1;
+
+        // Add antecedents
+        switch (entry.reason) {
+            .unit_propagation => |antecedent_ref| {
+                const antecedent = cnf.getClause(antecedent_ref.*);
+                for (antecedent) |ant_lit| {
+                    if (ant_lit == entry.literal) continue;
+
+                    if (!learningClause.contains(ant_lit)) {
+                        learningClause.set(ant_lit, undefined);
+
+                        const lvl = trail.assignments.getValue(Variables.not(ant_lit)).?;
+
+                        if (lvl == trail.current_level) {
+                            at_current_level += 1;
+                        } else if (lvl > max_level) {
+                            max_level = lvl;
+                            second_watch_lit = ant_lit;
+                        } else if (second_watch_lit == null) {
+                            second_watch_lit = ant_lit;
+                        }
+                    }
+                }
+            },
+            else => unreachable, // Should not happen if at_current_level > 1
+        }
+    }
+
+    // 3. Find the UIP
+    // The UIP is the only literal remaining in learningClause with level == current_level
+    var uip: Literal = 0;
+    var found_uip = false;
+
+    // We have to iterate the dict to find it because we don't track it explicitly in the loop
+    // TODO: Track this in the loop above
+    for (0..learningClause.dict.arr.len) |i| {
+        const lit = learningClause.literalOf(i);
+        if (learningClause.contains(lit)) {
+            const lvl = trail.assignments.getValue(Variables.not(lit)).?;
+            if (lvl == trail.current_level) {
+                uip = lit;
+                found_uip = true;
+                break;
+            }
+        }
+    }
+    std.debug.assert(found_uip);
+
+    return .{
+        .backtrack_level = max_level,
+        .uip = uip,
+        .second_watch = second_watch_lit,
+    };
+}
+
+fn setToClause(gpa: std.mem.Allocator, clauseSet: *ClauseSet) ![]Literal {
+    var count: usize = 0;
+    for (0..clauseSet.dict.arr.len) |i| {
+        if (clauseSet.contains(clauseSet.literalOf(i))) {
+            count += 1;
+        }
+    }
+
+    const clause = try gpa.alloc(Literal, count);
+
+    var j: usize = 0;
+    for (0..clauseSet.dict.arr.len) |i| {
+        const lit = clauseSet.literalOf(i);
+        if (clauseSet.contains(lit)) {
+            clause[j] = lit;
+            j += 1;
+        }
+    }
+
+    return clause;
+}
+
 pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
     const trail = try Trail.init(gpa, cnf.num_variables);
     defer trail.deinit();
 
-    // Initial check (Level 0 propagation)
+    const learningClause = try ClauseSet.init(gpa, cnf.num_variables);
+    defer learningClause.deinit();
+
+    // Initial Propagation (Level 0)
     if (try propagate(trail, cnf, 0)) |_| {
         return Result.unsat;
     }
@@ -153,44 +287,68 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
 
     while (true) {
         // 1. Propagation Phase
-        const conflict = try propagate(trail, cnf, processed_head);
+        const maybeConflict = try propagate(trail, cnf, processed_head);
 
-        // Mark all current items as processed
+        // Update head to current end of trail
         processed_head = trail.items().len;
 
-        if (conflict) |_| {
-            // 2. Conflict Handling
+        if (maybeConflict) |conflict| {
+            // 2. Conflict Resolution
             if (trail.current_level == 0) {
                 return Result.unsat;
             }
 
-            // Your specific pop() implementation unwinds to the last .assigned decision
-            if (trail.pop()) |decision_lit| {
-                // We found the decision 'X'. We now know 'X' leads to conflict.
-                // We must try 'not(X)'.
-                // We mark it as .backtracked so that if this also fails, pop()
-                // will skip it and go to the previous decision level.
-                try trail.assign(Variables.not(decision_lit), .backtracked);
+            const data = conflictAnalysis(conflict, trail, cnf, learningClause);
 
-                // Reset propagation head to the new item we just added
-                processed_head = trail.items().len - 1;
-                continue;
-            } else {
-                // If pop returns null, we have exhausted the decision stack
-                return Result.unsat;
-            }
+            // Create the new clause from the set
+            const new_clause = try setToClause(gpa, learningClause);
+
+            // Add to database manually to not invoke watch
+            // append clause at the end of literals array
+            const start = cnf.literals.items.len;
+            try cnf.literals.appendSlice(cnf.allocator, new_clause);
+
+            const meta_ptr = try cnf.arena.allocator().create(Clauses.ClauseMeta);
+            meta_ptr.* = Clauses.ClauseMeta{
+                .start = start,
+                .end = start + new_clause.len,
+                .capacity = new_clause.len,
+                .alive = true,
+                .watch1 = data.uip,
+                .watch2 = data.second_watch,
+            };
+            try cnf.clauses.append(cnf.allocator, meta_ptr);
+            try cnf.watcher.register(meta_ptr);
+
+            gpa.free(new_clause);
+            learningClause.reset();
+
+            // 3. Backtracking
+            trail.backtrack(data.backtrack_level);
+
+            // The learned clause makes the UIP unit at the backtrack level.
+            // We must assign it manually, providing the new clause as the reason.
+            try trail.assign(data.uip, .{ .unit_propagation = meta_ptr });
+
+            // Reset processed_head to the item we just added so propagate sees it
+            processed_head = trail.items().len - 1;
+
+            continue; // Jump back to propagate immediately
         }
 
-        // 3. SAT Check
+        // 5. SAT Check
         if (trail.items().len == cnf.num_variables) {
             return Result{ .sat = try trail.toLiteralArray() };
         }
 
-        // 4. Decision Phase
+        // 6. Decision Phase
         if (chooseLit(trail, cnf)) |lit| {
-            try trail.assign(lit, .assigned); // This marks the new level
+            try trail.assign(lit, .assigned);
+            // processed_head tracks the start of unpropagated literals.
+            // The new decision is at the end, so point to it.
             processed_head = trail.items().len - 1;
         } else {
+            // Should be covered by SAT check, but safe fallback
             return Result{ .sat = try trail.toLiteralArray() };
         }
     }
