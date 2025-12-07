@@ -319,6 +319,7 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
             };
             try cnf.clauses.append(cnf.allocator, meta_ptr);
             try cnf.watcher.register(meta_ptr);
+            meta_ptr.watch2 = meta_ptr.watch2 orelse data.uip; // We learned a unit clause
 
             gpa.free(new_clause);
             learningClause.reset();
