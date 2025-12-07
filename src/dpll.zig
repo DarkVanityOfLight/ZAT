@@ -3,6 +3,7 @@ const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
 const Trail = @import("trail.zig").Trail;
 const Result = @import("result.zig").Result;
+const DRAT_Proof = @import("DRAT_proof.zig").Proof;
 
 const ClauseSet = @import("datastructures/EpochDict.zig").LiteralEpochDict(void);
 
@@ -117,7 +118,7 @@ fn propagate(trail: *Trail, cnf: *Clauses.CNF, start_index: usize) !?*Clauses.Cl
                 } else {
                     // The other literal is Unassigned (it implies Unit).
                     // We propagate 'other_lit' to make the clause True.
-                    // Note: We leave the watch on 'false_lit' for now,
+                    // NOTE: We leave the watch on 'false_lit' for now,
                     try trail.assign(other_lit, .{ .unit_propagation = clause });
 
                     // We move to the next clause in this list
@@ -272,9 +273,11 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
     const learningClause = try ClauseSet.init(gpa, cnf.num_variables);
     defer learningClause.deinit();
 
+    var proof = DRAT_Proof.init(gpa);
+
     // Initial Propagation (Level 0)
     if (try propagate(trail, cnf, 0)) |_| {
-        return Result.unsat;
+        return Result{ .unsat = proof };
     }
 
     var processed_head: usize = 0;
@@ -289,13 +292,15 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
         if (maybeConflict) |conflict| {
             // 2. Conflict Resolution
             if (trail.current_level == 0) {
-                return Result.unsat;
+                return Result{ .unsat = proof };
             }
 
             const data = conflictAnalysis(conflict, trail, cnf, learningClause);
 
             // Create the new clause from the set
             const new_clause = try setToClause(gpa, learningClause);
+
+            try proof.addClause(new_clause);
 
             // Add to database manually to not invoke watch
             // append clause at the end of literals array

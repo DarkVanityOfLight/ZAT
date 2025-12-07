@@ -34,7 +34,11 @@ pub fn run(ctx: zli.CommandContext) !void {
             gpa.free(assignment);
             _ = try ctx.writer.print("\n", .{});
         },
-        .unsat => _ = try ctx.writer.write("s UNSATISFIABLE\n"),
+        .unsat => |*proof| {
+            defer @constCast(proof).deinit();
+            _ = try ctx.writer.write("s UNSATISFIABLE\n");
+            try @constCast(proof).writeToFile("proof.drat");
+        },
         .unknown => _ = try ctx.writer.write("s UNKNOWN\n"),
     }
     try ctx.writer.print("c Finished solving in {d} ms\n", .{@divTrunc(timer.lap(), std.time.ns_per_ms)});
