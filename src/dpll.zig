@@ -164,11 +164,10 @@ fn conflictAnalysis(
 
     // 1. Initialize with the current conflicting clause
     for (conflict_clause) |literal| {
-        // Only process if not already in the set
         if (!learningClause.contains(literal)) {
             learningClause.set(literal, undefined);
 
-            const lvl = trail.assignments.getValue(Variables.not(literal)).?; // Variable level
+            const lvl = trail.assignments.getValue(Variables.not(literal)).?;
 
             if (lvl == trail.current_level) {
                 at_current_level += 1;
@@ -176,7 +175,6 @@ fn conflictAnalysis(
                 max_level = lvl;
                 second_watch_lit = literal;
             } else if (second_watch_lit == null) {
-                // Determine a second watch even if level is 0 or same as max_level
                 second_watch_lit = literal;
             }
         }
@@ -184,18 +182,32 @@ fn conflictAnalysis(
 
     // 2. Iterate backwards (Resolution) to find 1-UIP
     var index = trail.stack.items.len - 1;
+    var uip: Literal = 0;
+    var found_uip = false;
 
-    while (at_current_level > 1) : (index -= 1) {
+    // We iterate backwards through the trail.
+    // The loop continues until we find the UIP (when at_current_level == 1).
+    while (index >= 0) : (index -= 1) {
         const entry = trail.stack.items[index];
         const conflict_lit = Variables.not(entry.literal);
 
+        // We only care about literals present in our current conflict set
         if (!learningClause.contains(conflict_lit)) continue;
 
-        // Remove the literal we are resolving on
+        // If there is only 1 literal left at the current level,
+        // and we just hit it on the trail, this is the First UIP.
+        if (at_current_level == 1) {
+            uip = conflict_lit;
+            found_uip = true;
+            break;
+        }
+
+        // Resolution step:
+        // 1. Remove the literal being resolved
         learningClause.unset(conflict_lit);
         at_current_level -= 1;
 
-        // Add antecedents
+        // 2. Add antecedents
         switch (entry.reason) {
             .unit_propagation => |antecedent_ref| {
                 const antecedent = cnf.getClause(antecedent_ref.*);
@@ -218,28 +230,10 @@ fn conflictAnalysis(
                     }
                 }
             },
-            else => unreachable, // Should not happen if at_current_level > 1
+            else => unreachable, // Should not happen during conflict resolution
         }
     }
 
-    // 3. Find the UIP
-    // The UIP is the only literal remaining in learningClause with level == current_level
-    var uip: Literal = 0;
-    var found_uip = false;
-
-    // We have to iterate the dict to find it because we don't track it explicitly in the loop
-    // TODO: Track this in the loop above
-    for (0..learningClause.dict.arr.len) |i| {
-        const lit = learningClause.literalOf(i);
-        if (learningClause.contains(lit)) {
-            const lvl = trail.assignments.getValue(Variables.not(lit)).?;
-            if (lvl == trail.current_level) {
-                uip = lit;
-                found_uip = true;
-                break;
-            }
-        }
-    }
     std.debug.assert(found_uip);
 
     return .{
