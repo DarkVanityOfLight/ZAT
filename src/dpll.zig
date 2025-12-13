@@ -153,8 +153,9 @@ fn conflictAnalysis(
     conflict: *Clauses.ClauseMeta,
     trail: *Trail,
     cnf: *Clauses.CNF,
-    learningClause: *ClauseSet,
-) ConflictData {
+    learningClauseSet: *ClauseSet,
+    learningClauseList: *std.array_list.Managed(Literal),
+) !ConflictData {
     const conflict_clause = cnf.getClause(conflict.*);
 
     var at_current_level: usize = 0;
@@ -163,11 +164,13 @@ fn conflictAnalysis(
     var max_level: usize = 0;
     var second_watch_lit: ?Literal = null;
 
+    try learningClauseList.ensureUnusedCapacity(conflict_clause.len);
     // 1. Initialize with the current conflicting clause
     for (conflict_clause) |literal| {
         // Only process if not already in the set
-        if (!learningClause.contains(literal)) {
-            learningClause.set(literal, undefined);
+        if (!learningClauseSet.contains(literal)) {
+            learningClauseSet.set(literal, undefined);
+            try learningClauseList.append(literal);
 
             const lvl = trail.assignments.getValue(Variables.not(literal)).?; // Variable level
 
@@ -190,10 +193,10 @@ fn conflictAnalysis(
         const entry = trail.stack.items[index];
         const conflict_lit = Variables.not(entry.literal);
 
-        if (!learningClause.contains(conflict_lit)) continue;
+        if (!learningClauseSet.contains(conflict_lit)) continue;
 
         // Remove the literal we are resolving on
-        learningClause.unset(conflict_lit);
+        learningClauseSet.unset(conflict_lit);
         at_current_level -= 1;
 
         // Add antecedents
@@ -203,8 +206,9 @@ fn conflictAnalysis(
                 for (antecedent) |ant_lit| {
                     if (ant_lit == entry.literal) continue;
 
-                    if (!learningClause.contains(ant_lit)) {
-                        learningClause.set(ant_lit, undefined);
+                    if (!learningClauseSet.contains(ant_lit)) {
+                        learningClauseSet.set(ant_lit, undefined);
+                        try learningClauseList.append(ant_lit);
 
                         const lvl = trail.assignments.getValue(Variables.not(ant_lit)).?;
 
@@ -224,15 +228,14 @@ fn conflictAnalysis(
     }
 
     // 3. Find the UIP
-    // The UIP is the only literal remaining in learningClause with level == current_level
+    // The UIP is the only literal remaining in learningClauseSet with level == current_level
     var uip: Literal = 0;
     var found_uip = false;
 
     // We have to iterate the dict to find it because we don't track it explicitly in the loop
-    // TODO: Track this in the loop above
-    for (0..learningClause.dict.arr.len) |i| {
-        const lit = learningClause.literalOf(i);
-        if (learningClause.contains(lit)) {
+    for (0..learningClauseSet.dict.arr.len) |i| {
+        const lit = learningClauseSet.literalOf(i);
+        if (learningClauseSet.contains(lit)) {
             const lvl = trail.assignments.getValue(Variables.not(lit)).?;
             if (lvl == trail.current_level) {
                 uip = lit;
@@ -250,34 +253,32 @@ fn conflictAnalysis(
     };
 }
 
-fn setToClause(gpa: std.mem.Allocator, clauseSet: *ClauseSet) ![]Literal {
-    var count: usize = 0;
-    for (0..clauseSet.dict.arr.len) |i| {
-        if (clauseSet.contains(clauseSet.literalOf(i))) {
-            count += 1;
-        }
-    }
+fn setToClause(clauseSet: *ClauseSet, clauseList: *std.array_list.Managed(Literal)) []Literal {
+    var write_index: usize = 0;
 
-    const clause = try gpa.alloc(Literal, count);
-
-    var j: usize = 0;
-    for (0..clauseSet.dict.arr.len) |i| {
-        const lit = clauseSet.literalOf(i);
+    for (clauseList.items) |lit| {
         if (clauseSet.contains(lit)) {
-            clause[j] = lit;
-            j += 1;
+            clauseList.items[write_index] = lit;
+            write_index += 1;
         }
     }
 
-    return clause;
+    clauseList.items = clauseList.items[0..write_index];
+    return clauseList.items;
 }
 
 pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
     const trail = try Trail.init(gpa, cnf.num_variables);
     defer trail.deinit();
 
-    const learningClause = try ClauseSet.init(gpa, cnf.num_variables);
-    defer learningClause.deinit();
+    const learningClauseSet = try ClauseSet.init(gpa, cnf.num_variables);
+    defer learningClauseSet.deinit();
+    var learningClauseList: std.array_list.Managed(Literal) = blk: {
+        var list = std.ArrayList(Literal).empty;
+        // toManaged returns the struct by value, not a pointer
+        break :blk list.toManaged(gpa);
+    };
+    defer learningClauseList.deinit();
 
     var proof = DRAT_Proof.init(gpa);
 
@@ -301,10 +302,16 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
                 return Result{ .unsat = proof };
             }
 
-            const data = conflictAnalysis(conflict, trail, cnf, learningClause);
+            const data = try conflictAnalysis(
+                conflict,
+                trail,
+                cnf,
+                learningClauseSet,
+                &learningClauseList,
+            );
 
             // Create the new clause from the set
-            const new_clause = try setToClause(gpa, learningClause);
+            const new_clause = setToClause(learningClauseSet, &learningClauseList);
 
             try proof.addClause(new_clause);
 
@@ -326,8 +333,8 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
             try cnf.watcher.register(meta_ptr);
             meta_ptr.watch2 = meta_ptr.watch2 orelse data.uip; // We learned a unit clause
 
-            gpa.free(new_clause);
-            learningClause.reset();
+            learningClauseSet.reset();
+            learningClauseList.clearRetainingCapacity();
 
             // 3. Backtracking
             trail.backtrack(data.backtrack_level);
