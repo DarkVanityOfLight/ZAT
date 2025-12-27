@@ -5,7 +5,6 @@ const Clauses = ZAT.Clauses;
 const DIMACS = ZAT.DIMACS;
 const DRAT_Proof = ZAT.DRAT_Proof;
 const Literal = ZAT.Variables.Literal;
-const bank = ZAT.Bank;
 const Engine = ZAT.Engine;
 
 const zli = @import("zli");
@@ -43,10 +42,7 @@ pub fn run(ctx: zli.CommandContext) !void {
         .writer = if (drat_bw) |*w| &w.interface else null,
     };
 
-    // Initializing the bank
-    bank.setBudgets(0, 0, 1000, 0);
-
-    var engine = try Engine.init(gpa, &cnf);
+    var engine = try Engine.init(gpa, &cnf, &proof);
 
     // Solving
 

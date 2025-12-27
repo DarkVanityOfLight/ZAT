@@ -11,6 +11,7 @@ pub const Reason = union(enum) {
     unit_propagation: *Clauses.ClauseMeta,
     assigned, // Represents a Decision
     backtracked,
+    unit,
 };
 
 pub const TrailFrame = struct {
@@ -37,7 +38,6 @@ pub const Trail = struct {
     pub fn deinit(self: *Trail) void {
         self.stack.deinit(self.gpa);
         self.assignments.deinit();
-        self.allocator.destroy(self);
     }
 
     pub fn assign(self: *Trail, literal: Literal, reason: Reason) !void {

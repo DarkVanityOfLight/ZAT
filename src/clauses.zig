@@ -1,6 +1,5 @@
 const std = @import("std");
 const Literal = @import("variables.zig").Literal;
-const Watcher = @import("Watcher.zig").Watcher;
 
 pub const Satisfiable = enum {
     sat,
@@ -18,47 +17,35 @@ pub const ClauseMeta = struct {
 };
 
 pub const CNF = struct {
-    allocator: std.mem.Allocator,
     num_clauses: usize,
     num_variables: usize,
     literals: std.ArrayList(Literal),
     clauses: std.ArrayList(*ClauseMeta),
-    watcher: Watcher,
     arena: std.heap.ArenaAllocator,
 
     pub fn init(gpa: std.mem.Allocator, num_clauses: usize, num_variables: usize) !CNF {
+        var arena = std.heap.ArenaAllocator.init(gpa);
         return CNF{
-            .allocator = gpa,
             .num_clauses = num_clauses,
             .num_variables = num_variables,
-            .literals = try std.ArrayList(Literal).initCapacity(gpa, num_clauses * 2),
-            .clauses = try std.ArrayList(*ClauseMeta).initCapacity(gpa, num_clauses * 2),
-            .watcher = try Watcher.init(gpa, num_variables),
-            .arena = std.heap.ArenaAllocator.init(gpa),
+            .literals = try std.ArrayList(Literal).initCapacity(arena.allocator(), num_clauses * 2),
+            .clauses = try std.ArrayList(*ClauseMeta).initCapacity(arena.allocator(), num_clauses * 2),
+            .arena = arena,
         };
     }
 
     pub fn deinit(self: *CNF) void {
+        self.literals.deinit(self.arena.allocator());
+        self.clauses.deinit(self.arena.allocator());
         self.arena.deinit();
-        self.literals.deinit(self.allocator);
-        self.clauses.deinit(self.allocator);
-        self.watcher.deinit();
     }
 
-    pub fn addClause(self: *CNF, new_literals: []Literal) !void {
-        // append clause at the end of literals array
+    pub fn addClause(self: *CNF, new_literals: []Literal, w1: ?Literal, w2: ?Literal) !*ClauseMeta {
+        // 1. Store the literals
         const start = self.literals.items.len;
-        try self.literals.appendSlice(self.allocator, new_literals);
+        try self.literals.appendSlice(self.arena.allocator(), new_literals);
 
-        var w1: ?Literal = null;
-        var w2: ?Literal = null;
-        if (new_literals.len >= 2) {
-            w1 = new_literals[0];
-            w2 = new_literals[1];
-        } else if (new_literals.len == 1) {
-            w1 = new_literals[0];
-        }
-
+        // 2. Allocate the metadata in the stable Arena
         const meta_ptr = try self.arena.allocator().create(ClauseMeta);
 
         meta_ptr.* = ClauseMeta{
@@ -69,8 +56,12 @@ pub const CNF = struct {
             .watch1 = w1,
             .watch2 = w2,
         };
-        try self.clauses.append(self.allocator, meta_ptr);
-        try self.watcher.register(meta_ptr);
+
+        // 3. Keep track of the pointer in our list
+        try self.clauses.append(self.arena.allocator(), meta_ptr);
+
+        // 4. Return the pointer so the caller can give it to the Watcher
+        return meta_ptr;
     }
 
     pub fn deleteClause(self: *CNF, clause_index: usize) void {

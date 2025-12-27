@@ -69,9 +69,11 @@ fn parseLine(line: []const u8, cnf: *CNF, lit_set: *LiteralSet, clause_buf: *std
 
     // Only add if not empty (lines with just '0' are technically empty clauses -> UNSAT,
     // but usually parser artifacts)
-    if (clause_buf.items.len > 0) {
-        try cnf.addClause(clause_buf.items);
-    }
+    _ = try cnf.addClause(
+        clause_buf.items,
+        null,
+        null,
+    );
 
     return true;
 }
