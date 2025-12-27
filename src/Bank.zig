@@ -8,18 +8,20 @@ pub const OutOfBudget = error{
     OutOfOperations,
 };
 
-// Global state variables (private to this module by default)
+/// Constant representing an unlimited budget
+pub const unlimited = std.math.maxInt(usize);
+
+// Global state variables
 var assigns: usize = 0;
 var propagations: usize = 0;
 var conflicts: usize = 0;
 var operations: usize = 0;
 
-var assign_budget: usize = 0;
-var propagation_budget: usize = 0;
-var conflict_budget: usize = 0;
-var operation_budget: usize = 0;
+var assign_budget: usize = unlimited;
+var propagation_budget: usize = unlimited;
+var conflict_budget: usize = unlimited;
+var operation_budget: usize = unlimited;
 
-// Configuration functions
 pub fn setBudgets(a: usize, p: usize, c: usize, o: usize) void {
     assign_budget = a;
     propagation_budget = p;
@@ -28,27 +30,37 @@ pub fn setBudgets(a: usize, p: usize, c: usize, o: usize) void {
 }
 
 pub fn countAssign() OutOfBudget!void {
-    if (assigns >= assign_budget) return OutOfBudget.OutOfAssigns;
+    // If budget is not unlimited, check against the limit
+    if (assign_budget != unlimited and assigns >= assign_budget)
+        return OutOfBudget.OutOfAssigns;
     assigns += 1;
 }
 
 pub fn countPropagate() OutOfBudget!void {
-    if (propagations >= propagation_budget) return OutOfBudget.OutOfPropagations;
+    if (propagation_budget != unlimited and propagations >= propagation_budget)
+        return OutOfBudget.OutOfPropagations;
     propagations += 1;
 }
 
 pub fn countConflict() OutOfBudget!void {
-    if (conflicts >= conflict_budget) return OutOfBudget.OutOfConflicts;
+    if (conflict_budget != unlimited and conflicts >= conflict_budget)
+        return OutOfBudget.OutOfConflicts;
     conflicts += 1;
 }
 
 pub fn countOperations(ops: usize) OutOfBudget!void {
     const r = @addWithOverflow(operations, ops);
 
-    if (r[1] == 1 or r[0] >= operation_budget)
-        return OutOfBudget.OutOfOperations;
+    // Overflow check for the counter itself (prevents panic)
+    if (r[1] == 1) {
+        operations = std.math.maxInt(usize);
+    } else {
+        operations = r[0];
+    }
 
-    operations = r[0];
+    // Only return error if budget is enforced and exceeded
+    if (operation_budget != unlimited and operations >= operation_budget)
+        return OutOfBudget.OutOfOperations;
 }
 
 pub fn reset() void {
@@ -58,7 +70,6 @@ pub fn reset() void {
     operations = 0;
 }
 
-// Getters if you need to inspect counts elsewhere
 pub fn getAssigns() usize {
     return assigns;
 }
