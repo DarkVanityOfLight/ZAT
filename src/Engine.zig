@@ -96,9 +96,9 @@ pub fn solve(self: *Self) !Result {
             const lit = self.cnf.getClause(cMeta.*)[0];
 
             if (self.trail.contains(Variables.not(lit))) return .unsat;
-            self.trail.assign(lit, .unit);
+            try self.trail.assign(lit, .unit);
             cMeta.watch1 = lit;
-            self.watcher.modifyWatch(lit, cMeta, true);
+            try self.watcher.modifyWatch(lit, cMeta, true);
         }
     }
 
