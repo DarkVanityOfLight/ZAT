@@ -189,106 +189,103 @@ fn search(self: *Self) !Result {
     }
 }
 
-// The actual learned clause is in learningClauseSet
-// learningClauseList contains ALL literals encountered while propagating
-fn conflictAnalysis(
-    self: *Self,
-    conflict: *Clauses.ClauseMeta,
-) !ConflictData {
-    const conflict_clause = self.cnf.getClause(conflict.*);
+fn conflictAnalysis(self: *Self, conflict: *Clauses.ClauseMeta) !ConflictData {
+    var counter: usize = 0;
+    var p: Literal = 0;
+    var trail_idx = self.trail.items().len - 1;
 
-    var at_current_level: usize = 0;
+    try self.learningClauseList.append(undefined); // Reserve UIP spot
 
-    // Variables for finding the second highest level
-    var max_level: usize = 0;
-    var second_watch_lit: ?Literal = null;
+    // Start with the conflict clause as the first 'reason'
+    var reason = conflict;
 
-    try self.learningClauseList.ensureUnusedCapacity(conflict_clause.len);
-    // 1. Initialize with the current conflicting clause
-    for (conflict_clause) |literal| {
-        // Only process if not already in the set
-        if (!self.learningClauseSet.contains(literal)) {
-            self.learningClauseSet.set(literal, undefined);
-            try self.learningClauseList.append(literal);
+    while (true) {
+        const clause_lits = self.cnf.getClause(reason.*);
+        for (clause_lits) |lit| {
+            // Skip the literal we are currently resolving (p).
+            // In the first iteration, p is 0 (Bottom), so no literals are skipped.
+            if (lit == p) continue;
 
-            const lvl = self.trail.assignments.getValue(Variables.not(literal)).?; // Variable level
+            if (!self.learningClauseSet.contains(lit)) {
+                self.learningClauseSet.set(lit, {});
 
-            if (lvl == self.trail.current_level) {
-                at_current_level += 1;
-            } else if (lvl > max_level) {
-                max_level = lvl;
-                second_watch_lit = literal;
-            } else if (second_watch_lit == null) {
-                // Determine a second watch even if level is 0 or same as max_level
-                second_watch_lit = literal;
+                const assgn_lvl = (self.trail.assignments.getValue(Variables.not(lit)) orelse self.trail.assignments.getValue(lit)).?;
+
+                if (assgn_lvl == self.trail.current_level) {
+                    counter += 1;
+                } else if (assgn_lvl > 0) {
+                    try self.learningClauseList.append(lit);
+                }
             }
         }
-    }
 
-    // 2. Iterate backwards (Resolution) to find 1-UIP
-    var index = self.trail.stack.items.len - 1;
+        // Search the trail backwards for the next literal to resolve
+        while (true) {
+            const frame = self.trail.items()[trail_idx];
+            const lit_on_trail = frame.literal;
 
-    while (at_current_level > 1) : (index -= 1) {
-        const entry = self.trail.stack.items[index];
-        const conflict_lit = Variables.not(entry.literal);
+            // Does the current clause contain the negation of this trail literal?
+            if (self.learningClauseSet.contains(Variables.not(lit_on_trail))) {
+                p = lit_on_trail;
 
-        if (!self.learningClauseSet.contains(conflict_lit)) continue;
+                // If counter is 1, this literal is the 1st UIP
+                if (counter == 1) break;
 
-        // Remove the literal we are resolving on
-        self.learningClauseSet.unset(conflict_lit);
-        at_current_level -= 1;
-
-        // Add antecedents
-        switch (entry.reason) {
-            .unit_propagation => |antecedent_ref| {
-                const antecedent = self.cnf.getClause(antecedent_ref.*);
-                for (antecedent) |ant_lit| {
-                    if (ant_lit == entry.literal) continue;
-
-                    if (!self.learningClauseSet.contains(ant_lit)) {
-                        self.learningClauseSet.set(ant_lit, undefined);
-                        try self.learningClauseList.append(ant_lit);
-
-                        const lvl = self.trail.assignments.getValue(Variables.not(ant_lit)).?;
-
-                        if (lvl == self.trail.current_level) {
-                            at_current_level += 1;
-                        } else if (lvl > max_level) {
-                            max_level = lvl;
-                            second_watch_lit = ant_lit;
-                        } else if (second_watch_lit == null) {
-                            second_watch_lit = ant_lit;
-                        }
-                    }
+                // Otherwise, get the reason for this literal to resolve further
+                switch (frame.reason) {
+                    .unit_propagation => |u_reason| {
+                        reason = u_reason;
+                        // Successfully found a new reason
+                    },
+                    else => {
+                        // This should be unreachable in a correct solver
+                        unreachable;
+                    },
                 }
-            },
-            else => unreachable, // Should not happen if at_current_level > 1
-        }
-    }
 
-    // 3. Find the UIP
-    // The UIP is the only literal remaining in learningClauseSet with level == current_level
-    var uip: Literal = 0;
-    var found_uip = false;
-
-    // We have to iterate the dict to find it because we don't track it explicitly in the loop
-    for (0..self.learningClauseSet.dict.arr.len) |i| {
-        const lit = self.learningClauseSet.literalOf(i);
-        if (self.learningClauseSet.contains(lit)) {
-            const lvl = self.trail.assignments.getValue(Variables.not(lit)).?;
-            if (lvl == self.trail.current_level) {
-                uip = lit;
-                found_uip = true;
+                // Found a literal at current level, decrement and move to outer loop
+                // to add its reason's literals to the set.
+                counter -= 1;
                 break;
             }
+
+            // Safety check to prevent underflow
+            if (trail_idx == 0) break;
+            trail_idx -= 1;
+        }
+
+        // Check UIP condition
+        if (counter == 1) break;
+
+        // Move back one to search for the next literal in the next iteration
+        if (trail_idx == 0) break;
+        trail_idx -= 1;
+    }
+
+    // The UIP literal is the negation of the literal 'p' that triggered the counter==0
+    const asserting_lit = Variables.not(p);
+    self.learningClauseList.items[0] = asserting_lit;
+
+    // Calculate Backtrack Level
+    var bt_lvl: usize = 0;
+    var second_watch_idx: usize = 0;
+
+    for (self.learningClauseList.items[1..], 0..) |lit, i| {
+        // Lookup level of the TRUE version of the literal
+        const lvl = self.trail.assignments.getValue(Variables.not(lit)).?;
+        if (lvl > bt_lvl) {
+            bt_lvl = lvl;
+            second_watch_idx = i + 1;
         }
     }
-    std.debug.assert(found_uip);
 
-    return .{
-        .backtrack_level = max_level,
-        .uip = uip,
-        .second_watch = second_watch_lit,
+    return ConflictData{
+        .backtrack_level = bt_lvl,
+        .uip = asserting_lit,
+        .second_watch = if (self.learningClauseList.items.len > 1)
+            self.learningClauseList.items[second_watch_idx]
+        else
+            null,
     };
 }
 

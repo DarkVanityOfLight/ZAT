@@ -54,20 +54,10 @@ pub const Trail = struct {
         self.assignments.set(literal, self.current_level);
     }
 
-    /// Backtracks until it undoes the last Decision (.assigned).
-    /// Returns the decision literal that triggered the level,
-    /// or null if the stack is empty.
-    pub fn pop(self: *Trail) ?Literal {
-        while (self.stack.pop()) |frame| {
-            // Remove from fast lookup
-            self.assignments.unset(frame.literal);
-
-            if (frame.reason == .assigned) {
-                self.current_level -= 1;
-                return frame.literal;
-            }
-        }
-        return null;
+    pub fn pop(self: *Trail) !TrailFrame {
+        const frame = try self.pop();
+        self.assignments.unset(frame.literal);
+        return frame;
     }
 
     /// Fast O(1) check if a literal is currently on the trail
