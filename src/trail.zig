@@ -2,6 +2,7 @@ const std = @import("std");
 const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
 const Literal = Variables.Literal;
+const bank = @import("Bank.zig");
 
 const LiteralEpochDict = @import("datastructures/EpochDict.zig").LiteralEpochDict;
 
@@ -41,6 +42,7 @@ pub const Trail = struct {
     }
 
     pub fn assign(self: *Trail, literal: Literal, reason: Reason) !void {
+        try bank.countAssign();
         if (reason == .assigned) {
             self.current_level += 1;
         }

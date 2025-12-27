@@ -17,6 +17,10 @@ var propagations: usize = 0;
 var conflicts: usize = 0;
 var operations: usize = 0;
 
+var total_assigns: usize = 0;
+var total_propagations: usize = 0;
+var total_conflicts: usize = 0;
+
 var assign_budget: usize = unlimited;
 var propagation_budget: usize = unlimited;
 var conflict_budget: usize = unlimited;
@@ -34,18 +38,21 @@ pub fn countAssign() OutOfBudget!void {
     if (assign_budget != unlimited and assigns >= assign_budget)
         return OutOfBudget.OutOfAssigns;
     assigns += 1;
+    total_assigns += 1;
 }
 
 pub fn countPropagate() OutOfBudget!void {
     if (propagation_budget != unlimited and propagations >= propagation_budget)
         return OutOfBudget.OutOfPropagations;
     propagations += 1;
+    total_propagations += 1;
 }
 
 pub fn countConflict() OutOfBudget!void {
     if (conflict_budget != unlimited and conflicts >= conflict_budget)
         return OutOfBudget.OutOfConflicts;
     conflicts += 1;
+    total_conflicts += 1;
 }
 
 pub fn countOperations(ops: usize) OutOfBudget!void {
@@ -75,4 +82,15 @@ pub fn getAssigns() usize {
 }
 pub fn getConflicts() usize {
     return conflicts;
+}
+
+pub fn report() void { // Or pass as args
+    const msg =
+        \\c === Solver Statistics === 
+        \\c Conflicts    : {d}
+        \\c Propagations : {d}
+        \\c Assignments  : {d}
+        \\
+    ;
+    std.debug.print(msg, .{ total_conflicts, total_propagations, total_assigns });
 }

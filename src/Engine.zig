@@ -99,7 +99,21 @@ pub fn solve(self: *Self) !Result {
         try self.watcher.register(cMeta);
     }
 
-    return self.search();
+    bank.setBudgets(bank.unlimited, bank.unlimited, 1000, bank.unlimited);
+
+    var restarts: usize = 0;
+    process_loop: while (true) {
+        return self.search() catch |err| switch (err) {
+            error.OutOfAssigns, error.OutOfPropagations, error.OutOfConflicts, error.OutOfOperations => {
+                if (restarts % 10 == 0) bank.report();
+                bank.reset();
+
+                restarts += 1;
+                continue :process_loop;
+            },
+            else => return err,
+        };
+    }
 }
 
 fn search(self: *Self) !Result {
@@ -315,6 +329,7 @@ fn propagate(self: *Self, start_index: usize) !?*Clauses.ClauseMeta {
                     // The other literal is Unassigned (it implies Unit).
                     // We propagate 'other_lit' to make the clause True.
                     // NOTE: We leave the watch on 'false_lit' for now,
+                    try bank.countPropagate();
                     try self.trail.assign(other_lit, .{ .unit_propagation = clause });
 
                     // We move to the next clause in this list
