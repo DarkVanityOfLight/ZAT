@@ -76,7 +76,7 @@ fn parseLine(line: []const u8, cnf: *CNF, lit_set: *LiteralSet, clause_buf: *std
     return true;
 }
 
-pub fn parseDimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
+pub fn parseDimacs(alloc: std.mem.Allocator, content: []const u8) !CNF {
     var lines = std.mem.tokenizeAny(u8, content, "\n\r");
 
     // 1. Find the preamble (p cnf ...)
@@ -95,7 +95,7 @@ pub fn parseDimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
     if (line_opt == null) return error.NoPreamble;
     const cnf_meta = try parseFirstLine(line_opt.?);
 
-    const cnf = try CNF.init(
+    var cnf = try CNF.init(
         alloc,
         cnf_meta.clauses,
         cnf_meta.variables,
@@ -104,7 +104,7 @@ pub fn parseDimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
 
     // 2. Initialize Helper Structures
     // We instantiate them here to avoid global state
-    const lit_set = try LiteralSet.init(alloc, cnf.num_variables);
+    var lit_set = try LiteralSet.init(alloc, cnf.num_variables);
     defer lit_set.deinit();
 
     var clause_buf = std.array_list.Managed(Literal).init(alloc);
@@ -119,7 +119,7 @@ pub fn parseDimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
             break;
         }
 
-        const success = parseLine(line, cnf, lit_set, &clause_buf) catch |err| {
+        const success = parseLine(line, &cnf, &lit_set, &clause_buf) catch |err| {
             std.debug.print("Error parsing line: {s} ({any})\n", .{ line, err });
             return err;
         };
@@ -135,7 +135,7 @@ pub fn parseDimacs(alloc: std.mem.Allocator, content: []const u8) !*CNF {
 pub fn readDimacs(
     alloc: std.mem.Allocator,
     file_path: []const u8,
-) !*CNF {
+) !CNF {
     const f = try std.fs.cwd().openFile(file_path, .{ .mode = .read_only });
     defer f.close();
 

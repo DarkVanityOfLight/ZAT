@@ -26,10 +26,8 @@ pub const CNF = struct {
     watcher: Watcher,
     arena: std.heap.ArenaAllocator,
 
-    pub fn init(gpa: std.mem.Allocator, num_clauses: usize, num_variables: usize) !*CNF {
-        const cnf = try gpa.create(CNF);
-
-        cnf.* = CNF{
+    pub fn init(gpa: std.mem.Allocator, num_clauses: usize, num_variables: usize) !CNF {
+        return CNF{
             .allocator = gpa,
             .num_clauses = num_clauses,
             .num_variables = num_variables,
@@ -38,7 +36,6 @@ pub const CNF = struct {
             .watcher = try Watcher.init(gpa, num_variables),
             .arena = std.heap.ArenaAllocator.init(gpa),
         };
-        return cnf;
     }
 
     pub fn deinit(self: *CNF) void {
@@ -46,7 +43,6 @@ pub const CNF = struct {
         self.literals.deinit(self.allocator);
         self.clauses.deinit(self.allocator);
         self.watcher.deinit();
-        self.allocator.destroy(self);
     }
 
     pub fn addClause(self: *CNF, new_literals: []Literal) !void {

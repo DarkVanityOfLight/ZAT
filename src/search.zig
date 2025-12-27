@@ -275,18 +275,13 @@ fn setToClause(clauseSet: *ClauseSet, clauseList: *std.array_list.Managed(Litera
     return clauseList.items;
 }
 
-pub fn search(gpa: std.mem.Allocator, cnf: *Clauses.CNF, proof: *DRAT_Proof) !Result {
-    const trail = try Trail.init(gpa, cnf.num_variables);
-    defer trail.deinit();
-
-    const learningClauseSet = try ClauseSet.init(gpa, cnf.num_variables);
-    defer learningClauseSet.deinit();
-    var learningClauseList: std.array_list.Managed(Literal) = blk: {
-        var list = std.ArrayList(Literal).empty;
-        // toManaged returns the struct by value, not a pointer
-        break :blk list.toManaged(gpa);
-    };
-    defer learningClauseList.deinit();
+pub fn search(
+    cnf: *Clauses.CNF,
+    trail: *Trail,
+    learningClauseSet: ClauseSet,
+    learningClauseList: std.array_list.Managed(Literal),
+    proof: *DRAT_Proof,
+) !Result {
     // Initial Propagation (Level 0)
     if (try propagate(trail, cnf, 0)) |_| {
         return .unsat;

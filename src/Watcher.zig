@@ -8,21 +8,28 @@ const Page = std.array_list.Managed(*ClauseMeta);
 const LiteralDict = LiteralEpochDict(Page);
 
 pub const Watcher = struct {
-    book: *LiteralDict,
-    allocator: std.mem.Allocator,
+    const Self = @This();
+    book: LiteralDict,
 
-    pub fn init(gpa: std.mem.Allocator, num_vars: usize) !@This() {
-        const book = try LiteralDict.init(gpa, num_vars);
+    pub fn init(gpa: std.mem.Allocator, num_vars: usize) !Self {
+        var book = try LiteralDict.init(gpa, num_vars);
+        errdefer book.deinit();
 
-        // Pre-initialize every list in the dictionary.
-        for (book.dict.arr) |*entry| {
-            entry.epoch = book.dict.epoch; // Mark as currently valid
-            entry.value = Page.init(gpa); // Initialize the Managed list with the allocator
+        var initialized_count: usize = 0;
+        errdefer {
+            for (book.dict.arr[0..initialized_count]) |*entry| {
+                entry.value.deinit();
+            }
         }
 
-        return @This(){
+        for (book.dict.arr) |*entry| {
+            entry.value = Page.init(gpa);
+            entry.epoch = book.dict.epoch;
+            initialized_count += 1;
+        }
+
+        return Self{
             .book = book,
-            .allocator = gpa,
         };
     }
 

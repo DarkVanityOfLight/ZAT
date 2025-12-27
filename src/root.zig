@@ -6,3 +6,4 @@ pub const Bank = @import("Bank.zig");
 pub const search = @import("search.zig").search;
 pub const EpochDict = @import("datastructures/EpochDict.zig");
 pub const DRAT_Proof = @import("DRAT_proof.zig");
+pub const Engine = @import("Engine.zig").Engine;

@@ -20,24 +20,22 @@ pub const TrailFrame = struct {
 };
 
 pub const Trail = struct {
-    stack: std.array_list.Managed(TrailFrame), // TODO: Deprecated, we have the allocator anyways
-    assignments: *AssignmentSet,
+    stack: std.ArrayList(TrailFrame),
+    assignments: AssignmentSet,
     current_level: usize,
-    allocator: std.mem.Allocator,
+    gpa: std.mem.Allocator,
 
-    pub fn init(alloc: std.mem.Allocator, num_vars: usize) !*Trail {
-        const self = try alloc.create(Trail);
-        self.* = Trail{
-            .stack = std.array_list.Managed(TrailFrame).init(alloc),
-            .assignments = try AssignmentSet.init(alloc, num_vars),
+    pub fn init(gpa: std.mem.Allocator, num_vars: usize) !Trail {
+        return Trail{
+            .stack = std.ArrayList(TrailFrame).empty,
+            .assignments = try AssignmentSet.init(gpa, num_vars),
             .current_level = 0,
-            .allocator = alloc,
+            .gpa = gpa,
         };
-        return self;
     }
 
     pub fn deinit(self: *Trail) void {
-        self.stack.deinit();
+        self.stack.deinit(self.gpa);
         self.assignments.deinit();
         self.allocator.destroy(self);
     }
@@ -47,7 +45,7 @@ pub const Trail = struct {
             self.current_level += 1;
         }
 
-        try self.stack.append(TrailFrame{
+        try self.stack.append(self.gpa, TrailFrame{
             .literal = literal,
             .reason = reason,
             .level = self.current_level,
@@ -83,7 +81,7 @@ pub const Trail = struct {
 
     /// Helper to get just the literals as a slice (caller owns memory)
     pub fn toLiteralArray(self: *Trail) ![]Literal {
-        const res = try self.allocator.alloc(Literal, self.stack.items.len);
+        const res = try self.gpa.alloc(Literal, self.stack.items.len);
         for (self.stack.items, 0..) |frame, i| {
             res[i] = frame.literal;
         }

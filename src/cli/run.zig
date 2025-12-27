@@ -6,6 +6,7 @@ const DIMACS = ZAT.DIMACS;
 const DRAT_Proof = ZAT.DRAT_Proof;
 const Literal = ZAT.Variables.Literal;
 const bank = ZAT.Bank;
+const Engine = ZAT.Engine;
 
 const zli = @import("zli");
 
@@ -21,7 +22,7 @@ pub fn run(ctx: zli.CommandContext) !void {
     var timer = try std.time.Timer.start();
 
     // Parsing
-    const cnf = try DIMACS.readDimacs(gpa, dimacs_path);
+    var cnf = try DIMACS.readDimacs(gpa, dimacs_path);
     try stdout.print("c Finished parsing in {d} ms\n", .{timer.lap() / std.time.ns_per_ms});
 
     // DRAT Setup
@@ -45,8 +46,11 @@ pub fn run(ctx: zli.CommandContext) !void {
     // Initializing the bank
     bank.setBudgets(0, 0, 1000, 0);
 
+    var engine = try Engine.init(gpa, &cnf);
+
     // Solving
-    const res = try ZAT.search(gpa, cnf, &proof);
+
+    const res = try engine.solve();
 
     // Reporting
     switch (res) {

@@ -72,7 +72,7 @@ pub fn LiteralEpochDict(comptime T: type) type {
         one_index: usize,
         gpa: std.mem.Allocator,
 
-        pub fn init(gpa: std.mem.Allocator, num_vars: usize) !*Self {
+        pub fn init(gpa: std.mem.Allocator, num_vars: usize) !Self {
             // Logic for indexing literals: 2 slots per variable (pos and neg)
             const total = (2 * num_vars);
             const arr = try gpa.alloc(InternalDict.Entry, total);
@@ -81,10 +81,7 @@ pub fn LiteralEpochDict(comptime T: type) type {
             // Initialize epochs to 0
             @memset(arr, InternalDict.Entry{ .epoch = 0, .value = undefined });
 
-            const sett = try gpa.create(Self);
-            errdefer gpa.destroy(set);
-
-            sett.* = Self{
+            return Self{
                 .dict = InternalDict{
                     .arr = arr,
                     .epoch = 1,
@@ -92,13 +89,10 @@ pub fn LiteralEpochDict(comptime T: type) type {
                 .one_index = num_vars,
                 .gpa = gpa,
             };
-
-            return sett;
         }
 
         pub fn deinit(self: *Self) void {
             self.gpa.free(self.dict.arr);
-            self.gpa.destroy(self);
         }
 
         inline fn indexOf(self: *Self, literal: Literal) usize {
