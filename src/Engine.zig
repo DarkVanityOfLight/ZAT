@@ -207,9 +207,12 @@ fn conflictAnalysis(self: *Self, conflict: *Clauses.ClauseMeta) !ConflictData {
             const frame = self.trail.items()[trail_idx];
             if (self.learningClauseSet.contains(Variables.not(frame.literal))) {
                 p = frame.literal;
+
+                if (counter == 1) break;
+
                 reason = switch (frame.reason) {
                     .unit_propagation => |u_reason| u_reason,
-                    else => conflict, // Should only happen if counter == 1 (UIP is decision)
+                    else => unreachable, // Should only happen if counter == 1 (UIP is decision)
                 };
                 break;
             }
