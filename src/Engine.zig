@@ -6,7 +6,7 @@ const Result = @import("Result.zig").Result;
 const DRAT_Proof = @import("DRAT_proof.zig").Proof;
 const CNF = @import("clauses.zig").CNF;
 const bank = @import("Bank.zig");
-const Watcher = @import("Watcher.zig").Watcher;
+const Watcher = @import("Watcher.zig");
 const ClauseSet = @import("datastructures/EpochDict.zig").LiteralEpochDict(void);
 const Literal = Variables.Literal;
 
