@@ -5,7 +5,7 @@ const Trail = @import("trail.zig").Trail;
 const Result = @import("result.zig").Result;
 const DRAT_Proof = @import("DRAT_proof.zig").Proof;
 
-const bank = @import("bank.zig");
+const bank = @import("Bank.zig");
 
 const ClauseSet = @import("datastructures/EpochDict.zig").LiteralEpochDict(void);
 
