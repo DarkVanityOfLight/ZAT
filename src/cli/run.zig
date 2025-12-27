@@ -3,44 +3,65 @@ const std = @import("std");
 const ZAT = @import("ZAT");
 const Clauses = ZAT.Clauses;
 const DIMACS = ZAT.DIMACS;
+const DRAT_Proof = ZAT.DRAT_Proof;
+const Literal = ZAT.Variables.Literal;
 
 const zli = @import("zli");
 
 pub fn run(ctx: zli.CommandContext) !void {
-    const file_path = ctx.getArg("DIMACS_CNF") orelse {
-        try ctx.writer.print("No file provided\n", .{});
+    const gpa = std.heap.page_allocator;
+    const stdout = ctx.writer; // Alias for readability
+
+    const dimacs_path = ctx.getArg("DIMACS_CNF") orelse {
+        try stdout.print("Error: No DIMACS file provided\n", .{});
         return;
     };
 
-    const gpa = std.heap.page_allocator;
     var timer = try std.time.Timer.start();
 
-    const cnf = try DIMACS.readDimacs(gpa, file_path);
+    // Parsing
+    const cnf = try DIMACS.readDimacs(gpa, dimacs_path);
+    try stdout.print("c Finished parsing in {d} ms\n", .{timer.lap() / std.time.ns_per_ms});
 
-    try ctx.writer.print("c Finished parsing in {d} ms\n", .{@divFloor(timer.lap(), std.time.ns_per_ms)});
+    // DRAT Setup
+    var drat_file: ?std.fs.File = blk: {
+        const path = ctx.flag("DRAT_PROOF", []const u8);
+        if (std.mem.eql(u8, "", path)) {
+            break :blk null;
+        }
+        break :blk try std.fs.cwd().createFile(path, .{});
+    };
+    defer if (drat_file) |*f| f.close();
 
-    const res = try ZAT.DPLL.dpll(gpa, cnf);
+    var buf: [4096]u8 = undefined;
+    var drat_bw = if (drat_file) |f| f.writer(&buf) else null;
+    defer if (drat_bw) |*w| w.interface.flush() catch {};
 
+    var proof = DRAT_Proof.Proof{
+        .writer = if (drat_bw) |*w| &w.interface else null,
+    };
+
+    // Solving
+    const res = try ZAT.DPLL.dpll(gpa, cnf, &proof);
+
+    // Reporting
     switch (res) {
         .sat => |assignment| {
-            std.mem.sort(i32, assignment, {}, comptime std.sort.asc(i32));
-            _ = try ctx.writer.write("s SATSIFIABLE\n");
+            defer gpa.free(assignment);
+            std.mem.sort(Literal, assignment, {}, comptime std.sort.asc(i32));
 
-            _ = try ctx.writer.write("v ");
-            for (assignment, 0..) |v, i| {
-                if (i != 0) _ = try ctx.writer.write(" ");
-                try ctx.writer.print("{d}", .{v});
-            }
-            gpa.free(assignment);
-            _ = try ctx.writer.print("\n", .{});
+            try stdout.writeAll("s SATISFIABLE\n");
+            try stdout.writeAll("v");
+            for (assignment) |v| try stdout.print(" {d}", .{v});
+            try stdout.writeAll("\n");
         },
-        .unsat => |*proof| {
-            defer @constCast(proof).deinit();
-            _ = try ctx.writer.write("s UNSATISFIABLE\n");
-            try @constCast(proof).writeToFile("proof.drat");
+        .unsat => {
+            try stdout.writeAll("s UNSATISFIABLE\n");
+            try proof.addClause(&[_]Literal{});
         },
-        .unknown => _ = try ctx.writer.write("s UNKNOWN\n"),
+        .unknown => try stdout.writeAll("s UNKNOWN\n"),
     }
-    try ctx.writer.print("c Finished solving in {d} ms\n", .{@divTrunc(timer.lap(), std.time.ns_per_ms)});
-    try ctx.writer.flush();
+
+    try stdout.print("c Finished solving in {d} ms\n", .{timer.lap() / std.time.ns_per_ms});
+    try stdout.flush();
 }

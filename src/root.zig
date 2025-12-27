@@ -5,3 +5,4 @@ pub const Variables = @import("variables.zig");
 pub const Bank = @import("bank.zig");
 pub const DPLL = @import("dpll.zig");
 pub const EpochDict = @import("datastructures/EpochDict.zig");
+pub const DRAT_Proof = @import("DRAT_proof.zig");

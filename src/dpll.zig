@@ -5,6 +5,8 @@ const Trail = @import("trail.zig").Trail;
 const Result = @import("result.zig").Result;
 const DRAT_Proof = @import("DRAT_proof.zig").Proof;
 
+const bank = @import("bank.zig").tracker;
+
 const ClauseSet = @import("datastructures/EpochDict.zig").LiteralEpochDict(void);
 
 const Literal = Variables.Literal;
@@ -25,6 +27,12 @@ inline fn getWatcherSlot(cMeta: Clauses.ClauseMeta, lit: Literal) ?bool {
 /// Returns true if successful (watch moved).
 /// Returns false if no other non-false literal exists (cannot move).
 fn tryMoveWatch(cMeta: *Clauses.ClauseMeta, moving_slot_1: bool, trail: *Trail, cnf: *Clauses.CNF) !bool {
+
+    // Early exit for binary clauses
+    if (cMeta.end - cMeta.start < 3) {
+        return false;
+    }
+
     const current_lit = getWatchedLiteral(cMeta.*, moving_slot_1).?;
     const other_lit = getWatchedLiteral(cMeta.*, !moving_slot_1);
 
@@ -267,7 +275,7 @@ fn setToClause(clauseSet: *ClauseSet, clauseList: *std.array_list.Managed(Litera
     return clauseList.items;
 }
 
-pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
+pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF, proof: *DRAT_Proof) !Result {
     const trail = try Trail.init(gpa, cnf.num_variables);
     defer trail.deinit();
 
@@ -279,16 +287,14 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
         break :blk list.toManaged(gpa);
     };
     defer learningClauseList.deinit();
-
-    var proof = DRAT_Proof.init(gpa);
-
     // Initial Propagation (Level 0)
     if (try propagate(trail, cnf, 0)) |_| {
-        return Result{ .unsat = proof };
+        return .unsat;
     }
 
     var processed_head: usize = 0;
 
+    // Main Loop
     while (true) {
         // 1. Propagation Phase
         const maybeConflict = try propagate(trail, cnf, processed_head);
@@ -299,7 +305,7 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
         if (maybeConflict) |conflict| {
             // 2. Conflict Resolution
             if (trail.current_level == 0) {
-                return Result{ .unsat = proof };
+                return .unsat;
             }
 
             const data = try conflictAnalysis(
@@ -312,7 +318,6 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF) !Result {
 
             // Create the new clause from the set
             const new_clause = setToClause(learningClauseSet, &learningClauseList);
-
             try proof.addClause(new_clause);
 
             // Add to database manually to not invoke watch

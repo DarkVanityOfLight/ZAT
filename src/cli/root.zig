@@ -11,6 +11,17 @@ pub fn build(writer: *Writer, reader: *Reader, allocator: std.mem.Allocator) !*z
         .version = .{ .major = 0, .minor = 0, .patch = 1, .pre = null, .build = null },
     }, run);
 
+    try root.addFlag(
+        .{
+            .name = "DRAT_PROOF",
+            .description = "The file the solver should output its DRAT proof to.",
+            .shortcut = "p",
+            .type = .String,
+            .default_value = .{
+                .String = "",
+            },
+        },
+    );
     try root.addPositionalArg(.{
         .name = "DIMACS_CNF",
         .description = "The formula to solve given in DIMACS CNF",
