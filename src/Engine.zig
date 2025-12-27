@@ -87,28 +87,34 @@ pub fn deinit(self: *Self) void {
 
 pub fn solve(self: *Self) !Result {
 
-    // Initialize the watches
+    // Search for unit clauses
     var cMetaIter = self.cnf.aliveClausesMeta();
     while (cMetaIter.next()) |cMeta| {
-        // Find first watch
-        const w1 = self.findWatchCandidate(cMeta.*, null) orelse {
-            // No non-false literals found at all
-            return .unsat;
-        };
+        const len = cMeta.end - cMeta.start;
+        if (len == 0) return .unsat;
+        if (len == 1) {
+            const lit = self.cnf.getClause(cMeta.*)[0];
 
-        // Find second watch (must be different from w1)
-        const w2 = self.findWatchCandidate(cMeta.*, w1) orelse {
-            // Only one non-false literal exists: it's a Unit Clause
-            // (assign handles cases where it might already be satisfied)
-            try self.trail.assign(w1, .unit);
-            continue;
-        };
+            if (self.trail.contains(Variables.not(lit))) return .unsat;
+            self.trail.assign(lit, .unit);
+            cMeta.watch1 = lit;
+            self.watcher.modifyWatch(lit, cMeta, true);
+        }
+    }
 
-        // Found two valid watchers
-        cMeta.watch1 = w1;
-        cMeta.watch2 = w2;
+    // Initialize the watches for all others
+    cMetaIter = self.cnf.aliveClausesMeta();
+    while (cMetaIter.next()) |cMeta| {
+        const len = cMeta.end - cMeta.start;
+        if (len < 2) continue; // Skip unit clause
 
-        // Register them in the watcher data structure
+        // Pick initial watches.
+        // We don't need to be fancy here propagate will fix things.
+        const lits = self.cnf.getClause(cMeta.*);
+        cMeta.watch1 = lits[0];
+        cMeta.watch2 = lits[1];
+
+        // Register them
         try self.watcher.register(cMeta);
     }
 
@@ -368,6 +374,7 @@ fn propagate(self: *Self, start_index: usize) !?*Clauses.ClauseMeta {
 /// Searches for a literal within a clause that is not False and is not `other_watch`.
 /// Returns null if no such literal exists.
 fn findWatchCandidate(self: *Self, cMeta: Clauses.ClauseMeta, other_watch: ?Literal) ?Literal {
+    // TODO: Maybe search for a good candidate
     const literals = self.cnf.getClause(cMeta);
     for (literals) |candidate| {
         if (other_watch != null and candidate == other_watch.?) continue;
