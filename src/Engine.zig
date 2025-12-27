@@ -122,11 +122,6 @@ pub fn solve(self: *Self) !Result {
 }
 
 fn search(self: *Self) !Result {
-    // Initial Propagation (Level 0)
-    if (try self.propagate(0)) |_| {
-        return .unsat;
-    }
-
     var processed_head: usize = 0;
 
     // Main Loop
