@@ -5,7 +5,7 @@ const Trail = @import("trail.zig").Trail;
 const Result = @import("result.zig").Result;
 const DRAT_Proof = @import("DRAT_proof.zig").Proof;
 
-const bank = @import("bank.zig").tracker;
+const bank = @import("bank.zig");
 
 const ClauseSet = @import("datastructures/EpochDict.zig").LiteralEpochDict(void);
 
@@ -275,7 +275,7 @@ fn setToClause(clauseSet: *ClauseSet, clauseList: *std.array_list.Managed(Litera
     return clauseList.items;
 }
 
-pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF, proof: *DRAT_Proof) !Result {
+pub fn search(gpa: std.mem.Allocator, cnf: *Clauses.CNF, proof: *DRAT_Proof) !Result {
     const trail = try Trail.init(gpa, cnf.num_variables);
     defer trail.deinit();
 
@@ -308,6 +308,7 @@ pub fn dpll(gpa: std.mem.Allocator, cnf: *Clauses.CNF, proof: *DRAT_Proof) !Resu
                 return .unsat;
             }
 
+            try bank.countConflict();
             const data = try conflictAnalysis(
                 conflict,
                 trail,
