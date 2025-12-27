@@ -2,7 +2,7 @@ const std = @import("std");
 const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
 const Trail = @import("trail.zig").Trail;
-const Result = @import("result.zig").Result;
+const Result = @import("Result.zig").Result;
 const DRAT_Proof = @import("DRAT_proof.zig").Proof;
 
 const bank = @import("Bank.zig");
