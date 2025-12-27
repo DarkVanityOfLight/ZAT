@@ -31,16 +31,21 @@ inline fn getWatcherSlot(cMeta: Clauses.ClauseMeta, lit: Literal) ?bool {
 }
 
 fn setToClause(clauseSet: *ClauseSet, clauseList: *std.array_list.Managed(Literal)) []Literal {
-    var write_index: usize = 0;
+    var i: usize = 0;
+    while (i < clauseList.items.len) {
+        const lit = clauseList.items[i];
 
-    for (clauseList.items) |lit| {
         if (clauseSet.contains(lit)) {
-            clauseList.items[write_index] = lit;
-            write_index += 1;
+            // Keep it, move to next
+            i += 1;
+        } else {
+            // Remove it by swapping the last element into this slot
+            _ = clauseList.swapRemove(i);
+            // Do NOT increment 'i' here, because the "new" element
+            // at index 'i' needs to be checked in the next iteration.
         }
     }
 
-    clauseList.items = clauseList.items[0..write_index];
     return clauseList.items;
 }
 
@@ -183,6 +188,8 @@ fn search(self: *Self) !Result {
     }
 }
 
+// The actual learned clause is in learningClauseSet
+// learningClauseList contains ALL literals encountered while propagating
 fn conflictAnalysis(
     self: *Self,
     conflict: *Clauses.ClauseMeta,
