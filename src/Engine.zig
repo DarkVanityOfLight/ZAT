@@ -42,21 +42,13 @@ proof: *DRAT_Proof,
 pub fn init(gpa: std.mem.Allocator, cnf: *CNF, proof: *DRAT_Proof) !Self {
     var list = std.ArrayList(Literal).empty;
     return Self{
-        .trail = try Trail.init(gpa, cnf.num_variables),
+        .trail = try Trail.init(gpa, cnf.num_variables, 1.0, 1.1),
         .learningClauseSet = try ClauseSet.init(gpa, cnf.num_variables),
         .learningClauseList = list.toManaged(gpa),
         .watcher = try Watcher.init(gpa, cnf.num_variables),
         .cnf = cnf,
         .proof = proof,
     };
-}
-
-fn learnClause(self: *Self, literals: []Literal, uip: Literal, second: ?Literal) !void {
-    // Step 1: Tell the CNF to store it. It returns a stable pointer.
-    const meta_ptr = try self.cnf.addClause(literals, uip, second);
-
-    // Step 2: Tell the Watcher to track this new pointer.
-    try self.watcher.register(meta_ptr);
 }
 
 pub fn deinit(self: *Self) void {
@@ -67,7 +59,29 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn solve(self: *Self) !Result {
+    bank.setBudgets(bank.unlimited, bank.unlimited, 1000, bank.unlimited);
 
+    switch (try self.initializeWatches()) {
+        .unsat => return .unsat,
+        else => {},
+    }
+
+    var restarts: usize = 0;
+    process_loop: while (true) {
+        return self.search() catch |err| switch (err) {
+            error.OutOfAssigns, error.OutOfPropagations, error.OutOfConflicts, error.OutOfOperations => {
+                if (restarts % 10 == 0) bank.report();
+                bank.reset();
+                try self.trail.backtrack(0);
+                restarts += 1;
+                continue :process_loop;
+            },
+            else => return err,
+        };
+    }
+}
+
+fn initializeWatches(self: *Self) !Result {
     // Search for unit clauses
     var cMetaIter = self.cnf.aliveClausesMeta();
     while (cMetaIter.next()) |cMeta| {
@@ -99,21 +113,7 @@ pub fn solve(self: *Self) !Result {
         try self.watcher.register(cMeta);
     }
 
-    bank.setBudgets(bank.unlimited, bank.unlimited, 1000, bank.unlimited);
-
-    var restarts: usize = 0;
-    process_loop: while (true) {
-        return self.search() catch |err| switch (err) {
-            error.OutOfAssigns, error.OutOfPropagations, error.OutOfConflicts, error.OutOfOperations => {
-                if (restarts % 10 == 0) bank.report();
-                bank.reset();
-
-                restarts += 1;
-                continue :process_loop;
-            },
-            else => return err,
-        };
-    }
+    return .unknown;
 }
 
 fn search(self: *Self) !Result {
@@ -154,7 +154,7 @@ fn search(self: *Self) !Result {
             self.learningClauseList.clearRetainingCapacity();
 
             // 3. Backtracking
-            self.trail.backtrack(data.backtrack_level);
+            try self.trail.backtrack(data.backtrack_level);
 
             // The learned clause makes the UIP unit at the backtrack level.
             // We must assign it manually, providing the new clause as the reason.
@@ -172,7 +172,7 @@ fn search(self: *Self) !Result {
         }
 
         // 6. Decision Phase
-        if (self.chooseLit()) |lit| {
+        if (self.trail.chooseLit()) |lit| {
             try self.trail.assign(lit, .assigned);
             // processed_head tracks the start of unpropagated literals.
             // The new decision is at the end, so point to it.
@@ -377,16 +377,4 @@ fn moveWatch(self: *Self, cMeta: *Clauses.ClauseMeta, moving_slot_1: bool) !bool
     }
 
     return false;
-}
-
-fn chooseLit(self: *Self) ?Variables.Literal {
-    // Dumb Heuristic: First unassigned variable
-    var var_idx: usize = 1;
-    while (var_idx <= self.cnf.num_variables) : (var_idx += 1) {
-        const lit: Literal = @intCast(var_idx);
-        if (!self.trail.contains(lit) and !self.trail.contains(Variables.not(lit))) {
-            return lit;
-        }
-    }
-    return null;
 }

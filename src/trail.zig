@@ -3,6 +3,7 @@ const Clauses = @import("clauses.zig");
 const Variables = @import("variables.zig");
 const Literal = Variables.Literal;
 const bank = @import("Bank.zig");
+const VSIDS = @import("VSIDS.zig");
 
 const LiteralEpochDict = @import("datastructures/EpochDict.zig").LiteralEpochDict;
 
@@ -26,12 +27,14 @@ pub const Trail = struct {
     assignments: AssignmentSet,
     current_level: usize,
     gpa: std.mem.Allocator,
+    vsids: *VSIDS, // Since VSIDS is closely related to the stack we have it here
 
-    pub fn init(gpa: std.mem.Allocator, num_vars: usize) !Trail {
+    pub fn init(gpa: std.mem.Allocator, num_vars: usize, bump_summand: f64, decay_factor: f64) !Trail {
         return Trail{
             .stack = std.ArrayList(TrailFrame).empty,
             .assignments = try AssignmentSet.init(gpa, num_vars),
             .current_level = 0,
+            .vsids = try VSIDS.init(gpa, num_vars, bump_summand, decay_factor),
             .gpa = gpa,
         };
     }
@@ -39,6 +42,7 @@ pub const Trail = struct {
     pub fn deinit(self: *Trail) void {
         self.stack.deinit(self.gpa);
         self.assignments.deinit();
+        self.vsids.deinit(self.gpa);
     }
 
     pub fn assign(self: *Trail, literal: Literal, reason: Reason) !void {
@@ -80,14 +84,7 @@ pub const Trail = struct {
         return res;
     }
 
-    /// Resets the trail completely (Level 0)
-    pub fn reset(self: *Trail) void {
-        self.stack.clearRetainingCapacity();
-        self.assignments.reset();
-        self.current_level = 0;
-    }
-
-    pub fn backtrack(self: *Trail, decision_level: usize) void {
+    pub fn backtrack(self: *Trail, decision_level: usize) !void {
         while (self.stack.items.len > 0) {
             const frame = self.stack.items[self.stack.items.len - 1];
 
@@ -99,6 +96,26 @@ pub const Trail = struct {
             _ = self.stack.pop(); // We know it isn't empty
             if (frame.reason == .assigned) self.current_level -= 1;
             self.assignments.unset(frame.literal);
+            // Notify VSIDS
+            try self.vsids.reinsert(Variables.varOf(frame.literal));
         }
+    }
+
+    pub fn isVarAssigned(self: *Trail, variable: Variables.Variable) bool {
+        const lit = Variables.litOf(variable);
+        return self.contains(lit) or self.contains(Variables.not(lit));
+    }
+
+    pub fn isVarOfLitAssigned(self: *Trail, lit: Variables.Literal) bool {
+        return self.contains(lit) or self.contains(Variables.not(lit));
+    }
+
+    pub fn chooseLit(self: *Trail) ?Variables.Literal {
+        while (self.vsids.selectVar()) |candidate| {
+            if (!self.isVarAssigned(candidate)) {
+                return Variables.litOf(candidate);
+            }
+        }
+        return null;
     }
 };
