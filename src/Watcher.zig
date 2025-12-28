@@ -75,6 +75,7 @@ pub fn watched(self: *@This(), literal: Literal) *Page {
     return self.book.get(literal).?;
 }
 
+// FIXME: This is slowing us down much
 pub fn moveWatch(self: *@This(), from: Literal, to: Literal, clause: *ClauseMeta) !void {
     const to_list = self.book.get(to).?;
     try to_list.append(clause);
