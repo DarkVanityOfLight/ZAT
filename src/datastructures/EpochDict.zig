@@ -182,7 +182,8 @@ pub fn VariableEpochDict(comptime T: type) type {
         }
 
         inline fn indexOf(_: *Self, variable: Variable) usize {
-            return @intCast(variable);
+            std.debug.assert(variable != 0);
+            return @as(usize, @intCast(variable)) - 1;
         }
 
         // Renamed from addLiteral to set for clarity, assumes key is Variable
