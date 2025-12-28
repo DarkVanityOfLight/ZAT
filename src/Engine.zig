@@ -128,37 +128,12 @@ fn search(self: *Self) !Result {
         processed_head = self.trail.items().len;
 
         if (maybeConflict) |conflict| {
-            // 2. Conflict Resolution
-            if (self.trail.current_level == 0) {
-                return .unsat;
-            }
+            if (self.trail.current_level == 0) return .unsat;
 
             try bank.countConflict();
-            const data = try self.conflictAnalysis(conflict);
+            self.trail.vsids.decay();
 
-            // Create the new clause from the set
-            const new_clause = self.learningClauseList.items;
-            try self.proof.addClause(new_clause);
-
-            // Add to database manually to not invoke watch
-            // append clause at the end of literals array
-
-            const meta_ptr = try self.cnf.addClause(
-                new_clause,
-                data.uip,
-                data.second_watch,
-            ); // Will copy new_clause
-
-            try self.watcher.register(meta_ptr);
-            self.learningClauseSet.reset();
-            self.learningClauseList.clearRetainingCapacity();
-
-            // 3. Backtracking
-            try self.trail.backtrack(data.backtrack_level);
-
-            // The learned clause makes the UIP unit at the backtrack level.
-            // We must assign it manually, providing the new clause as the reason.
-            try self.trail.assign(data.uip, .{ .unit_propagation = meta_ptr });
+            try self.resovleConflict(conflict);
 
             // Reset processed_head to the item we just added so propagate sees it
             processed_head = self.trail.items().len - 1;
@@ -182,6 +157,37 @@ fn search(self: *Self) !Result {
             return Result{ .sat = try self.trail.toLiteralArray() };
         }
     }
+}
+
+fn resovleConflict(self: *Self, conflict: *Clauses.ClauseMeta) !void {
+    const data = try self.conflictAnalysis(conflict);
+
+    // Create the new clause from the set
+    const new_clause = self.learningClauseList.items;
+
+    // Utilitis
+    try self.proof.addClause(new_clause);
+    self.trail.vsids.bumpActivityMany(new_clause);
+
+    // Add to database manually to not invoke watch
+    // append clause at the end of literals array
+
+    const meta_ptr = try self.cnf.addClause(
+        new_clause,
+        data.uip,
+        data.second_watch,
+    ); // Will copy new_clause
+
+    try self.watcher.register(meta_ptr);
+    self.learningClauseSet.reset();
+    self.learningClauseList.clearRetainingCapacity();
+
+    // 3. Backtracking
+    try self.trail.backtrack(data.backtrack_level);
+
+    // The learned clause makes the UIP unit at the backtrack level.
+    // We must assign it manually, providing the new clause as the reason.
+    try self.trail.assign(data.uip, .{ .unit_propagation = meta_ptr });
 }
 
 fn conflictAnalysis(self: *Self, conflict: *Clauses.ClauseMeta) !ConflictData {

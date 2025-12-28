@@ -1,5 +1,7 @@
 const std = @import("std");
 const Variable = @import("variables.zig").Variable;
+const Literal = @import("variables.zig").Literal;
+const varOf = @import("variables.zig").varOf;
 
 const ActivityHeap = std.PriorityQueue(Variable, *Self, compare);
 
@@ -53,7 +55,7 @@ pub fn init(gpa: std.mem.Allocator, num_vars: usize, bump_summand: f64, decay_fa
     for (1..num_vars + 1) |vi| {
         const v: Variable = @intCast(vi);
         self.var_set.set(v, Entry{
-            .activity_value = 0.0,
+            .activity_value = 1.0,
             .in_heap = true,
         });
         try self.activity_heap.add(v);
@@ -73,6 +75,13 @@ pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
 
 pub fn bumpActivity(self: *Self, v: Variable) void {
     self.var_set.get(v).?.activity_value += self.bump_summand;
+}
+
+pub fn bumpActivityMany(self: *Self, many: []Literal) void {
+    for (many) |item| {
+        const v = varOf(item);
+        self.bumpActivity(v);
+    }
 }
 
 pub fn decay(self: *Self) void {
