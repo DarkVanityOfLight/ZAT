@@ -47,8 +47,12 @@ pub const Trail = struct {
 
     pub fn assign(self: *Trail, literal: Literal, reason: Reason) !void {
         try bank.countAssign();
-        if (reason == .assigned) {
-            self.current_level += 1;
+
+        switch (reason) {
+            .unit_propagation => |cMeta| cMeta.locked = true,
+            .assigned => self.current_level += 1,
+            .backtracked => {},
+            .unit => {},
         }
 
         try self.stack.append(self.gpa, TrailFrame{
@@ -94,7 +98,13 @@ pub const Trail = struct {
             }
 
             _ = self.stack.pop(); // We know it isn't empty
-            if (frame.reason == .assigned) self.current_level -= 1;
+            switch (frame.reason) {
+                .unit_propagation => |cMeta| cMeta.locked = false,
+                .assigned => self.current_level -= 1,
+                .backtracked => {},
+                .unit => {},
+            }
+
             self.assignments.unset(frame.literal);
             // Notify VSIDS
             try self.vsids.reinsert(Variables.varOf(frame.literal));

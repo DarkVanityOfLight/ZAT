@@ -116,12 +116,6 @@ pub fn parseDimacs(alloc: std.mem.Allocator, content: []const u8) !CNF {
     // 3. Parse Clauses
     var clauses_found: usize = 0;
     while (lines.next()) |line| {
-        // Some files have more lines than declared in preamble; stop if we hit limit
-        // (Optional: strict parsers might error, lax parsers ignore extra)
-        if (clauses_found >= cnf.num_clauses) {
-            break;
-        }
-
         const success = parseLine(line, &cnf, &lit_set, &clause_buf) catch |err| {
             std.debug.print("Error parsing line: {s} ({any})\n", .{ line, err });
             return err;

@@ -15,6 +15,7 @@ pub const ClauseMeta = struct {
     watch1: ?Literal,
     watch2: ?Literal,
     clauseType: ClauseType,
+    locked: bool, // Is this clause currently part of a conflict on the trail
 };
 
 /// The list clauses/literals list should be organized like this:
@@ -23,7 +24,8 @@ pub const ClauseMeta = struct {
 /// fixed_index..len-1
 ///
 pub const CNF = struct {
-    num_clauses: usize,
+    num_fixed_clauses: usize,
+    num_learned_clauses: usize,
     num_variables: usize,
     literals: std.ArrayList(Literal),
     clauses: std.ArrayList(*ClauseMeta),
@@ -33,7 +35,8 @@ pub const CNF = struct {
     pub fn init(gpa: std.mem.Allocator, num_clauses: usize, num_variables: usize) !CNF {
         var arena = std.heap.ArenaAllocator.init(gpa);
         return CNF{
-            .num_clauses = num_clauses,
+            .num_fixed_clauses = 0, // we count them later
+            .num_learned_clauses = 0,
             .num_variables = num_variables,
             .literals = try std.ArrayList(Literal).initCapacity(arena.allocator(), num_clauses * 2),
             .clauses = try std.ArrayList(*ClauseMeta).initCapacity(arena.allocator(), num_clauses * 2),
@@ -64,6 +67,7 @@ pub const CNF = struct {
             .watch1 = w1,
             .watch2 = w2,
             .clauseType = if (learnedData) |ld| .{ .learned = ld } else .fixed,
+            .locked = false,
         };
 
         // 3. Keep track of the pointer in our list
@@ -78,10 +82,21 @@ pub const CNF = struct {
                 std.mem.swap(*ClauseMeta, &self.clauses.items[self.fixed_index], &self.clauses.items[last_idx]);
             }
             self.fixed_index += 1;
+            self.num_fixed_clauses += 1;
+        } else {
+            self.num_learned_clauses += 1;
         }
 
         // 4. Return the pointer so the caller can give it to the Watcher
         return meta_ptr;
+    }
+
+    pub fn deleteClause(self: *CNF, cMeta: *ClauseMeta) void {
+        cMeta.alive = false;
+        switch (cMeta.clauseType) {
+            ClauseType.learned => self.num_learned_clauses -= 1,
+            ClauseType.fixed => self.num_fixed_clauses -= 1,
+        }
     }
 
     pub fn getClause(self: *CNF, cMeta: ClauseMeta) []Literal {

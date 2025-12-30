@@ -1,5 +1,6 @@
 //! The bank is a global singleton, tracking execution costs
 const std = @import("std");
+const Statistics = @import("Statistics.zig");
 
 pub const OutOfBudget = error{
     OutOfAssigns,
@@ -11,86 +12,88 @@ pub const OutOfBudget = error{
 /// Constant representing an unlimited budget
 pub const unlimited = std.math.maxInt(usize);
 
-// Global state variables
-var assigns: usize = 0;
-var propagations: usize = 0;
-var conflicts: usize = 0;
-var operations: usize = 0;
+// --- Internal State ---
 
-var total_assigns: usize = 0;
-var total_propagations: usize = 0;
-var total_conflicts: usize = 0;
+/// Global totals and timers
+pub var stats = Statistics{ .start_time = 0 };
 
-var assign_budget: usize = unlimited;
-var propagation_budget: usize = unlimited;
-var conflict_budget: usize = unlimited;
-var operation_budget: usize = unlimited;
+/// Budget limits for the current search cycle
+var budgets = struct {
+    assign: usize = unlimited,
+    prop: usize = unlimited,
+    conf: usize = unlimited,
+    ops: usize = unlimited,
+}{};
 
+/// Current cycle counters (reset on bank.reset())
+var current = struct {
+    assigns: usize = 0,
+    props: usize = 0,
+    confs: usize = 0,
+    ops: usize = 0,
+}{};
+
+// --- Public API ---
+
+/// Initialize the bank (sets the start clock)
+pub fn init() void {
+    stats = .{ .start_time = std.time.milliTimestamp() };
+}
+
+/// Set the limits for the next search call
 pub fn setBudgets(a: usize, p: usize, c: usize, o: usize) void {
-    assign_budget = a;
-    propagation_budget = p;
-    conflict_budget = c;
-    operation_budget = o;
+    budgets.assign = a;
+    budgets.prop = p;
+    budgets.conf = c;
+    budgets.ops = o;
 }
 
 pub fn countAssign() OutOfBudget!void {
-    // If budget is not unlimited, check against the limit
-    if (assign_budget != unlimited and assigns >= assign_budget)
-        return OutOfBudget.OutOfAssigns;
-    assigns += 1;
-    total_assigns += 1;
+    if (current.assigns >= budgets.assign) return error.OutOfAssigns;
+    current.assigns += 1;
+    stats.assignments += 1;
 }
 
 pub fn countPropagate() OutOfBudget!void {
-    if (propagation_budget != unlimited and propagations >= propagation_budget)
-        return OutOfBudget.OutOfPropagations;
-    propagations += 1;
-    total_propagations += 1;
+    if (current.props >= budgets.prop) return error.OutOfPropagations;
+    current.props += 1;
+    stats.propagations += 1;
 }
 
 pub fn countConflict() OutOfBudget!void {
-    if (conflict_budget != unlimited and conflicts >= conflict_budget)
-        return OutOfBudget.OutOfConflicts;
-    conflicts += 1;
-    total_conflicts += 1;
+    if (current.confs >= budgets.conf) return error.OutOfConflicts;
+    current.confs += 1;
+    stats.conflicts += 1;
 }
 
 pub fn countOperations(ops: usize) OutOfBudget!void {
-    const r = @addWithOverflow(operations, ops);
-
-    // Overflow check for the counter itself (prevents panic)
-    if (r[1] == 1) {
-        operations = std.math.maxInt(usize);
-    } else {
-        operations = r[0];
+    // Handle budget check
+    const next_current = @addWithOverflow(current.ops, ops);
+    if (next_current[1] == 1 or next_current[0] >= budgets.ops) {
+        if (budgets.ops != unlimited) return error.OutOfOperations;
     }
+    current.ops = next_current[0];
 
-    // Only return error if budget is enforced and exceeded
-    if (operation_budget != unlimited and operations >= operation_budget)
-        return OutOfBudget.OutOfOperations;
+    // Handle global stats (with overflow protection)
+    const next_total = @addWithOverflow(stats.operations, ops);
+    stats.operations = if (next_total[1] == 1) std.math.maxInt(u64) else next_total[0];
 }
 
+/// Resets the current session counters (used when a budget is hit)
 pub fn reset() void {
-    assigns = 0;
-    propagations = 0;
-    conflicts = 0;
-    operations = 0;
+    current.assigns = 0;
+    current.props = 0;
+    current.confs = 0;
+    current.ops = 0;
 }
 
-pub fn getAssigns() usize {
-    return assigns;
-}
 pub fn getConflicts() usize {
-    return conflicts;
+    return current.confs;
 }
 
-pub fn report() void { // Or pass as args
-    const msg =
-        \\c === Solver Statistics === 
-        \\c Conflicts    : {d}
-        \\c Propagations : {d}
-        \\c Assignments  : {d}
-        \\
-    ;
-    std.debug.print(msg, .{ total_conflicts, total_propagations, total_assigns });
+/// Prints statistics to stderr
+pub fn report() void {
+    // Because we implemented 'format' in Statistics,
+    // we can just pass the struct to print.
+    std.debug.print("{}", .{stats});
 }

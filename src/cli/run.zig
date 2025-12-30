@@ -42,7 +42,7 @@ pub fn run(ctx: zli.CommandContext) !void {
         .writer = if (drat_bw) |*w| &w.interface else null,
     };
 
-    var engine = try Engine.init(gpa, &cnf, &proof);
+    var engine = try Engine.init(gpa, &cnf, &proof, stdout);
 
     // Solving
 

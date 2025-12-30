@@ -9,6 +9,12 @@ const bank = @import("Bank.zig");
 const Watcher = @import("Watcher.zig");
 const ClauseSet = @import("datastructures/EpochDict.zig").LiteralEpochDict(void);
 const Literal = Variables.Literal;
+const Statistics = @import("Statistics.zig");
+
+const STARTING_CLAUSE_LIMIT = 1000;
+const CLAUSE_LIMIT_INCREASE = 1000;
+const VSIDS_BUMP = 1.0;
+const VSIDS_DECAY_FACTOR = 1.1;
 
 // TODO: Handle unit clauses at other levels
 
@@ -39,16 +45,20 @@ learningClauseSet: ClauseSet,
 watcher: Watcher,
 cnf: *CNF,
 proof: *DRAT_Proof,
+learned_clause_limit: usize,
+writer: *std.Io.Writer,
 
-pub fn init(gpa: std.mem.Allocator, cnf: *CNF, proof: *DRAT_Proof) !Self {
+pub fn init(gpa: std.mem.Allocator, cnf: *CNF, proof: *DRAT_Proof, writer: *std.Io.Writer) !Self {
     var list = std.ArrayList(Literal).empty;
     return Self{
-        .trail = try Trail.init(gpa, cnf.num_variables, 1.0, 1.1),
+        .trail = try Trail.init(gpa, cnf.num_variables, VSIDS_BUMP, VSIDS_DECAY_FACTOR),
         .learningClauseSet = try ClauseSet.init(gpa, cnf.num_variables),
         .learningClauseList = list.toManaged(gpa),
         .watcher = try Watcher.init(gpa, cnf.num_variables),
         .cnf = cnf,
         .proof = proof,
+        .learned_clause_limit = STARTING_CLAUSE_LIMIT,
+        .writer = writer,
     };
 }
 
@@ -60,6 +70,7 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn solve(self: *Self) !Result {
+    bank.init();
     bank.setBudgets(bank.unlimited, bank.unlimited, 1000, bank.unlimited);
 
     switch (try self.initializeWatches()) {
@@ -71,7 +82,12 @@ pub fn solve(self: *Self) !Result {
     process_loop: while (true) {
         return self.search() catch |err| switch (err) {
             error.OutOfAssigns, error.OutOfPropagations, error.OutOfConflicts, error.OutOfOperations => {
-                if (restarts % 10 == 0) bank.report();
+                if (restarts % 10 == 0 and restarts > 0) {
+                    try self.writer.print(
+                        "Check-in at restart {d}:\n{f}",
+                        .{ restarts, bank.stats },
+                    );
+                }
                 bank.reset();
                 try self.trail.backtrack(0);
                 restarts += 1;
@@ -105,7 +121,7 @@ fn initializeWatches(self: *Self) !Result {
         if (len < 2) continue; // Skip unit clause
 
         // Pick initial watches.
-        // We don't need to be fancy here propagate will fix things.
+        // We don't need to be fancy here propagate will fix things (I hope)
         const lits = self.cnf.getClause(cMeta.*);
         cMeta.watch1 = lits[0];
         cMeta.watch2 = lits[1];
@@ -115,6 +131,45 @@ fn initializeWatches(self: *Self) !Result {
     }
 
     return .unknown;
+}
+
+fn pruneClauses(self: *Self) void {
+    const i = self.cnf.fixed_index;
+    std.debug.assert(self.cnf.clauses.items[i - 1].clauseType == .fixed);
+
+    const ltFn = struct {
+        fn lessThan(_: void, a: *Clauses.ClauseMeta, b: *Clauses.ClauseMeta) bool {
+            std.debug.assert(a.clauseType == .learned);
+            std.debug.assert(b.clauseType == .learned);
+
+            const aV = a.clauseType.learned.lbd;
+            const bV = b.clauseType.learned.lbd;
+            return std.math.compare(aV, std.math.CompareOperator.lt, bV);
+        }
+    }.lessThan;
+
+    // Sort by lbd
+    std.sort.heap(
+        *Clauses.ClauseMeta,
+        self.cnf.clauses.items[i..],
+        {},
+        ltFn,
+    );
+
+    // Throw away second half of the clauses,
+    const half = @divFloor(self.cnf.num_learned_clauses, 2);
+
+    var cMetaIter = self.cnf.aliveClausesMeta();
+
+    // Skip fixed clauses plus first half of the learned
+    const offset = self.cnf.num_fixed_clauses + half;
+    for (0..offset) |_| _ = cMetaIter.next();
+
+    // Delete the rest, does not prune them from the list, only set's them to not alive
+    while (cMetaIter.next()) |cMeta| {
+        if (cMeta.locked) continue; // We won't really delete half :D
+        self.cnf.deleteClause(cMeta);
+    }
 }
 
 fn search(self: *Self) !Result {
@@ -133,9 +188,10 @@ fn search(self: *Self) !Result {
 
             try bank.countConflict();
             self.trail.vsids.decay();
+            // TODO: Where to put this???
+            if (bank.getConflicts() >= self.learned_clause_limit) self.pruneClauses();
 
-            try self.resovleConflict(conflict);
-
+            try self.resolveConflict(conflict);
             // Reset processed_head to the item we just added so propagate sees it
             processed_head = self.trail.items().len - 1;
 
@@ -155,12 +211,13 @@ fn search(self: *Self) !Result {
             processed_head = self.trail.items().len - 1;
         } else {
             // Should be covered by SAT check, but safe fallback
+            @branchHint(.cold);
             return Result{ .sat = try self.trail.toLiteralArray() };
         }
     }
 }
 
-fn resovleConflict(self: *Self, conflict: *Clauses.ClauseMeta) !void {
+fn resolveConflict(self: *Self, conflict: *Clauses.ClauseMeta) !void {
     const data = try self.conflictAnalysis(conflict);
 
     // Create the new clause from the set
@@ -170,14 +227,11 @@ fn resovleConflict(self: *Self, conflict: *Clauses.ClauseMeta) !void {
     try self.proof.addClause(new_clause);
     self.trail.vsids.bumpActivityMany(new_clause);
 
-    // Add to database manually to not invoke watch
-    // append clause at the end of literals array
-
     const meta_ptr = try self.cnf.addClause(
         new_clause,
         data.uip,
         data.second_watch,
-        Clauses.LearnedInfo{ .lbd = 1 },
+        Clauses.LearnedInfo{ .lbd = data.lbd },
     ); // Will copy new_clause
 
     try self.watcher.register(meta_ptr);
