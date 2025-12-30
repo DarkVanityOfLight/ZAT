@@ -1,5 +1,6 @@
 const std = @import("std");
 const Literal = @import("variables.zig").Literal;
+const Watcher = @import("Watcher.zig");
 
 pub const LearnedInfo = struct {
     lbd: usize,
@@ -91,12 +92,20 @@ pub const CNF = struct {
         return meta_ptr;
     }
 
-    pub fn deleteClause(self: *CNF, cMeta: *ClauseMeta) void {
+    pub fn invalidateClause(self: *CNF, cMeta: *ClauseMeta, watcher: *Watcher) !void {
+        if (!cMeta.alive) return;
         cMeta.alive = false;
         switch (cMeta.clauseType) {
             ClauseType.learned => self.num_learned_clauses -= 1,
             ClauseType.fixed => self.num_fixed_clauses -= 1,
         }
+        try watcher.unregister(cMeta); // NOTE: We can do this lazily if cost is to high
+    }
+
+    /// MAKE SURE YOU INVALIDATED FIRST
+    pub fn destroyClause(self: *CNF, cMeta: *ClauseMeta) void {
+        std.debug.assert(cMeta.alive != true);
+        self.arena.allocator().destroy(cMeta);
     }
 
     pub fn getClause(self: *CNF, cMeta: ClauseMeta) []Literal {

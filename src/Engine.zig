@@ -133,43 +133,55 @@ fn initializeWatches(self: *Self) !Result {
     return .unknown;
 }
 
-fn pruneClauses(self: *Self) void {
-    const i = self.cnf.fixed_index;
-    std.debug.assert(self.cnf.clauses.items[i - 1].clauseType == .fixed);
+fn pruneClauses(self: *Self) !void {
+    const fixed_count = self.cnf.fixed_index;
+    // We only care about the learned clauses
+    const learned_slice = self.cnf.clauses.items[fixed_count..];
 
+    // Sort: Locked < LBD < Dead
     const ltFn = struct {
-        fn lessThan(_: void, a: *Clauses.ClauseMeta, b: *Clauses.ClauseMeta) bool {
-            std.debug.assert(a.clauseType == .learned);
-            std.debug.assert(b.clauseType == .learned);
-
-            const aV = a.clauseType.learned.lbd;
-            const bV = b.clauseType.learned.lbd;
-            return std.math.compare(aV, std.math.CompareOperator.lt, bV);
+        fn lessThan(_: void, a: *const Clauses.ClauseMeta, b: *const Clauses.ClauseMeta) bool {
+            // Push Alive (true) to front, Dead (false) to back
+            if (a.alive != b.alive) return a.alive;
+            // Push Locked (true) to front
+            if (a.locked != b.locked) return a.locked;
+            // Lower LBD is better
+            return a.clauseType.learned.lbd < b.clauseType.learned.lbd;
         }
     }.lessThan;
 
-    // Sort by lbd
-    std.sort.heap(
-        *Clauses.ClauseMeta,
-        self.cnf.clauses.items[i..],
-        {},
-        ltFn,
-    );
+    std.sort.block(*Clauses.ClauseMeta, learned_slice, {}, ltFn);
 
-    // Throw away second half of the clauses,
-    const half = @divFloor(self.cnf.num_learned_clauses, 2);
+    // Number of learned clauses to keep
+    const keep_limit = @divFloor(self.cnf.num_learned_clauses, 2);
 
-    var cMetaIter = self.cnf.aliveClausesMeta();
+    // Prune and track the new boundary
+    var kept_learned_count: usize = 0;
+    for (learned_slice) |cMeta| {
+        // Since we sorted dead clauses to the end, the first 'false' alive
+        // signals the end of all potentially useful clauses.
+        if (!cMeta.alive) break;
 
-    // Skip fixed clauses plus first half of the learned
-    const offset = self.cnf.num_fixed_clauses + half;
-    for (0..offset) |_| _ = cMetaIter.next();
+        // Decide if we keep this clause
+        const should_keep = (kept_learned_count < keep_limit) or cMeta.locked;
 
-    // Delete the rest, does not prune them from the list, only set's them to not alive
-    while (cMetaIter.next()) |cMeta| {
-        if (cMeta.locked) continue; // We won't really delete half :D
-        self.cnf.deleteClause(cMeta);
+        if (should_keep) {
+            kept_learned_count += 1;
+        } else {
+            // Mark for deletion. This clause (and any following it)
+            // will now fall outside the new length of the ArrayList.
+            try self.cnf.invalidateClause(cMeta, &self.watcher);
+        }
     }
+
+    // Increase the limit for the next cycle
+    self.learned_clause_limit += CLAUSE_LIMIT_INCREASE;
+
+    // Shrink: The new length is the fixed clauses + kept learned clauses
+    for (self.cnf.clauses.items[fixed_count + kept_learned_count ..]) |cMeta| {
+        self.cnf.destroyClause(cMeta);
+    }
+    self.cnf.clauses.shrinkRetainingCapacity(fixed_count + kept_learned_count);
 }
 
 fn search(self: *Self) !Result {
@@ -189,7 +201,7 @@ fn search(self: *Self) !Result {
             try bank.countConflict();
             self.trail.vsids.decay();
             // TODO: Where to put this???
-            if (bank.getConflicts() >= self.learned_clause_limit) self.pruneClauses();
+            if (bank.getConflicts() >= self.learned_clause_limit) try self.pruneClauses();
 
             try self.resolveConflict(conflict);
             // Reset processed_head to the item we just added so propagate sees it
