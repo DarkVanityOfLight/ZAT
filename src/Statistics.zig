@@ -1,5 +1,7 @@
 /// Container for all solver metrics
 const std = @import("std");
+const BankStats = @import("Bank.zig").BankStats;
+const bank = @import("Bank.zig");
 const Self = @This();
 
 conflicts: u64 = 0,
@@ -8,6 +10,21 @@ assignments: u64 = 0,
 operations: u64 = 0,
 restarts: u64 = 0,
 start_time: i64 = 0,
+max_learned_clauses: u64 = 0,
+learned_clauses: u64 = 0,
+
+pub fn init() Self {
+    return .{
+        .start_time = std.time.milliTimestamp(),
+    };
+}
+
+pub fn syncWithBank(self: *Self) void {
+    const bankStats = bank.current;
+    self.conflicts += bankStats.confs;
+    self.assignments += bankStats.assigns;
+    self.propagations += bankStats.props;
+}
 
 /// Formats the statistics for human reading (standard SAT solver style)
 pub fn format(
@@ -27,6 +44,7 @@ pub fn format(
         \\c Conflicts    : {d:<10} ({d:>.1} /s)
         \\c Propagations : {d:<10} ({d:>.1} /s)
         \\c Assignments  : {d:<10}
+        \\c L Clauses    : {d:<10} /{d:<10}
         \\
     , .{
         duration_s,
@@ -35,5 +53,7 @@ pub fn format(
         self.propagations,
         p_per_s,
         self.assignments,
+        self.learned_clauses,
+        self.max_learned_clauses,
     });
 }

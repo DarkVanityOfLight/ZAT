@@ -47,6 +47,7 @@ cnf: *CNF,
 proof: *DRAT_Proof,
 learned_clause_limit: usize,
 writer: *std.Io.Writer,
+statistics: Statistics,
 
 pub fn init(gpa: std.mem.Allocator, cnf: *CNF, proof: *DRAT_Proof, writer: *std.Io.Writer) !Self {
     var list = std.ArrayList(Literal).empty;
@@ -59,6 +60,7 @@ pub fn init(gpa: std.mem.Allocator, cnf: *CNF, proof: *DRAT_Proof, writer: *std.
         .proof = proof,
         .learned_clause_limit = STARTING_CLAUSE_LIMIT,
         .writer = writer,
+        .statistics = undefined,
     };
 }
 
@@ -70,8 +72,8 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn solve(self: *Self) !Result {
-    bank.init();
-    bank.setBudgets(bank.unlimited, bank.unlimited, 1000, bank.unlimited);
+    self.statistics = Statistics.init();
+    bank.setBudgets(bank.unlimited, bank.unlimited, 1000);
 
     switch (try self.initializeWatches()) {
         .unsat => return .unsat,
@@ -81,14 +83,17 @@ pub fn solve(self: *Self) !Result {
     var restarts: usize = 0;
     process_loop: while (true) {
         return self.search() catch |err| switch (err) {
-            error.OutOfAssigns, error.OutOfPropagations, error.OutOfConflicts, error.OutOfOperations => {
+            error.OutOfAssigns, error.OutOfPropagations, error.OutOfConflicts => {
                 if (restarts % 10 == 0 and restarts > 0) {
                     try self.writer.print(
                         "Check-in at restart {d}:\n{f}",
-                        .{ restarts, bank.stats },
+                        .{ restarts, self.statistics },
                     );
                 }
+
+                self.statistics.syncWithBank();
                 bank.reset();
+
                 try self.trail.backtrack(0);
                 restarts += 1;
                 continue :process_loop;
@@ -176,6 +181,8 @@ fn pruneClauses(self: *Self) !void {
 
     // Increase the limit for the next cycle
     self.learned_clause_limit += CLAUSE_LIMIT_INCREASE;
+    self.statistics.max_learned_clauses = self.learned_clause_limit;
+    self.statistics.learned_clauses = self.cnf.num_learned_clauses;
 
     // Shrink: The new length is the fixed clauses + kept learned clauses
     for (self.cnf.clauses.items[fixed_count + kept_learned_count ..]) |cMeta| {
@@ -201,7 +208,7 @@ fn search(self: *Self) !Result {
             try bank.countConflict();
             self.trail.vsids.decay();
             // TODO: Where to put this???
-            if (bank.getConflicts() >= self.learned_clause_limit) try self.pruneClauses();
+            if (self.cnf.num_learned_clauses >= self.learned_clause_limit) try self.pruneClauses();
 
             try self.resolveConflict(conflict);
             // Reset processed_head to the item we just added so propagate sees it
@@ -238,6 +245,7 @@ fn resolveConflict(self: *Self, conflict: *Clauses.ClauseMeta) !void {
     // Utilitis
     try self.proof.addClause(new_clause);
     self.trail.vsids.bumpActivityMany(new_clause);
+    self.statistics.learned_clauses = self.cnf.num_learned_clauses;
 
     const meta_ptr = try self.cnf.addClause(
         new_clause,
