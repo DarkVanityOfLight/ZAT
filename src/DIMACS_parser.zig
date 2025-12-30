@@ -73,6 +73,7 @@ fn parseLine(line: []const u8, cnf: *CNF, lit_set: *LiteralSet, clause_buf: *std
         clause_buf.items,
         null,
         null,
+        null,
     );
 
     return true;

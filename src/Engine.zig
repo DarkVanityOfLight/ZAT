@@ -16,6 +16,7 @@ const ConflictData = struct {
     backtrack_level: usize,
     uip: Literal,
     second_watch: ?Literal, // Null if the learned clause is unit (size 1)
+    lbd: usize, // The literal block distance, aka, the number of decision levels that used in this conflict clause
 };
 
 /// Helper to get the literal currently watched by the specific slot (1 or 2)
@@ -176,6 +177,7 @@ fn resovleConflict(self: *Self, conflict: *Clauses.ClauseMeta) !void {
         new_clause,
         data.uip,
         data.second_watch,
+        Clauses.LearnedInfo{ .lbd = 1 },
     ); // Will copy new_clause
 
     try self.watcher.register(meta_ptr);
@@ -192,19 +194,42 @@ fn resovleConflict(self: *Self, conflict: *Clauses.ClauseMeta) !void {
 
 fn conflictAnalysis(self: *Self, conflict: *Clauses.ClauseMeta) !ConflictData {
     var counter: usize = 0;
-    var p: Literal = 0;
     var trail_idx = self.trail.items().len - 1;
 
-    try self.learningClauseList.append(undefined); // Reserve UIP spot
+    // Reserve spot for the UIP literal (Asserting Literal)
+    try self.learningClauseList.append(undefined);
 
-    // Start with the conflict clause as the first 'reason'
-    var reason = conflict;
+    // Initialize with the conflict clause
+    for (self.cnf.getClause(conflict.*)) |lit| {
+        if (!self.learningClauseSet.contains(lit)) {
+            self.learningClauseSet.set(lit, {});
 
-    while (true) {
-        const clause_lits = self.cnf.getClause(reason.*);
-        for (clause_lits) |lit| {
+            const assgn_lvl = self.trail.assignments.getValue(Variables.not(lit)).?;
+            if (assgn_lvl == self.trail.current_level) {
+                counter += 1;
+            } else if (assgn_lvl > 0) {
+                try self.learningClauseList.append(lit);
+            }
+        }
+    }
+
+    // Resolve until 1st UIP is found
+    // We stop when 'counter == 1', meaning only one literal from the current level remains.
+    while (counter > 1) : (counter -= 1) {
+        // Find the next literal on the trail that is part of our conflict
+        while (!self.learningClauseSet.contains(Variables.not(self.trail.items()[trail_idx].literal))) : (trail_idx -= 1) {}
+
+        const frame = self.trail.items()[trail_idx];
+        const p = frame.literal;
+
+        // Resolve the current clause with the reason for literal 'p'
+        const reason_clause = switch (frame.reason) {
+            .unit_propagation => |u_reason| u_reason,
+            else => unreachable, // 1st UIP logic ensures we only resolve propagated literals
+        };
+
+        for (self.cnf.getClause(reason_clause.*)) |lit| {
             // Skip the literal we are currently resolving (p).
-            // In the first iteration, p is 0 (Bottom), so no literals are skipped.
             if (lit == p) continue;
 
             if (!self.learningClauseSet.contains(lit)) {
@@ -222,41 +247,40 @@ fn conflictAnalysis(self: *Self, conflict: *Clauses.ClauseMeta) !ConflictData {
             }
         }
 
-        // Find the next literal on the trail to resolve
-        while (true) {
-            const frame = self.trail.items()[trail_idx];
-            if (self.learningClauseSet.contains(Variables.not(frame.literal))) {
-                p = frame.literal;
-
-                if (counter == 1) break;
-
-                reason = switch (frame.reason) {
-                    .unit_propagation => |u_reason| u_reason,
-                    else => unreachable, // Should only happen if counter == 1 (UIP is decision)
-                };
-                break;
-            }
-            trail_idx -= 1;
-        }
-
-        if (counter <= 1) break; // counter == 1 means p is the 1st UIP
-        counter -= 1;
-        trail_idx -= 1; // Move to next item for the next search
+        // Prepare for the next search step
+        trail_idx -= 1;
     }
 
-    const asserting_lit = Variables.not(p);
+    // Identify the UIP
+    // The 1st UIP is the only literal from the current level left in the clause
+    while (!self.learningClauseSet.contains(Variables.not(self.trail.items()[trail_idx].literal))) : (trail_idx -= 1) {}
+
+    const asserting_lit = Variables.not(self.trail.items()[trail_idx].literal);
     self.learningClauseList.items[0] = asserting_lit;
 
-    // Calculate Backtrack Level and find the best second watch
+    // Calculate Backtrack Level
     var bt_lvl: usize = 0;
     var second_watch_idx: usize = 0;
 
+    // We don't need learningClauseSet anymore so we abuse it for LBD calculation
+    // Since we only need to talk about variables we only use positive literals
+    self.learningClauseSet.reset();
+
+    var lbd: usize = 0;
     if (self.learningClauseList.items.len > 1) {
-        // Initialize with the first available non-UIP literal
         second_watch_idx = 1;
-        for (self.learningClauseList.items[1..], 1..) |lit, i| {
+        for (self.learningClauseList.items, 0..) |lit, i| {
             const lvl = self.trail.assignments.getValue(Variables.not(lit)).?;
-            if (lvl > bt_lvl) {
+
+            // FIXME: This might get 2?? to large at the maximum decision level
+            const lvl_key: i32 = @intCast(lvl + 1);
+            if (!self.learningClauseSet.contains(lvl_key)) {
+                self.learningClauseSet.set(lvl_key, {});
+                lbd += 1;
+            }
+
+            // Ignore the UIP
+            if (i > 0 and lvl > bt_lvl) {
                 bt_lvl = lvl;
                 second_watch_idx = i;
             }
@@ -270,6 +294,7 @@ fn conflictAnalysis(self: *Self, conflict: *Clauses.ClauseMeta) !ConflictData {
             self.learningClauseList.items[second_watch_idx]
         else
             null,
+        .lbd = lbd,
     };
 }
 

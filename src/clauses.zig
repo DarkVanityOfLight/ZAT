@@ -1,11 +1,11 @@
 const std = @import("std");
 const Literal = @import("variables.zig").Literal;
 
-pub const Satisfiable = enum {
-    sat,
-    unsat,
-    unknown,
+pub const LearnedInfo = struct {
+    lbd: usize,
 };
+
+pub const ClauseType = union(enum) { learned: LearnedInfo, fixed };
 
 pub const ClauseMeta = struct {
     start: usize,
@@ -14,14 +14,21 @@ pub const ClauseMeta = struct {
     alive: bool,
     watch1: ?Literal,
     watch2: ?Literal,
+    clauseType: ClauseType,
 };
 
+/// The list clauses/literals list should be organized like this:
+/// 0..fixed_index contains all fixed clauses
+/// then follwed by all learned clauses
+/// fixed_index..len-1
+///
 pub const CNF = struct {
     num_clauses: usize,
     num_variables: usize,
     literals: std.ArrayList(Literal),
     clauses: std.ArrayList(*ClauseMeta),
     arena: std.heap.ArenaAllocator,
+    fixed_index: usize,
 
     pub fn init(gpa: std.mem.Allocator, num_clauses: usize, num_variables: usize) !CNF {
         var arena = std.heap.ArenaAllocator.init(gpa);
@@ -31,6 +38,7 @@ pub const CNF = struct {
             .literals = try std.ArrayList(Literal).initCapacity(arena.allocator(), num_clauses * 2),
             .clauses = try std.ArrayList(*ClauseMeta).initCapacity(arena.allocator(), num_clauses * 2),
             .arena = arena,
+            .fixed_index = 0,
         };
     }
 
@@ -40,7 +48,7 @@ pub const CNF = struct {
         self.arena.deinit();
     }
 
-    pub fn addClause(self: *CNF, new_literals: []Literal, w1: ?Literal, w2: ?Literal) !*ClauseMeta {
+    pub fn addClause(self: *CNF, new_literals: []Literal, w1: ?Literal, w2: ?Literal, learnedData: ?LearnedInfo) !*ClauseMeta {
         // 1. Store the literals
         const start = self.literals.items.len;
         try self.literals.appendSlice(self.arena.allocator(), new_literals);
@@ -55,41 +63,29 @@ pub const CNF = struct {
             .alive = true,
             .watch1 = w1,
             .watch2 = w2,
+            .clauseType = if (learnedData) |ld| .{ .learned = ld } else .fixed,
         };
 
         // 3. Keep track of the pointer in our list
         try self.clauses.append(self.arena.allocator(), meta_ptr);
 
+        if (learnedData == null) {
+            @branchHint(.unlikely);
+            // If this is a fixed clause but we already have learned clauses,
+            // swap it to the fixed_index position to keep the order.
+            if (self.fixed_index < self.clauses.items.len - 1) {
+                const last_idx = self.clauses.items.len - 1;
+                std.mem.swap(*ClauseMeta, &self.clauses.items[self.fixed_index], &self.clauses.items[last_idx]);
+            }
+            self.fixed_index += 1;
+        }
+
         // 4. Return the pointer so the caller can give it to the Watcher
         return meta_ptr;
     }
 
-    pub fn deleteClause(self: *CNF, clause_index: usize) void {
-        self.clauses.items[clause_index].alive = false;
-        self.num_clauses -= 1;
-    }
-
     pub fn getClause(self: *CNF, cMeta: ClauseMeta) []Literal {
         return self.literals.items[cMeta.start..cMeta.end];
-    }
-
-    pub fn modifyClause(self: *CNF, clause_index: usize, new_literals: []Literal) !void {
-        var pos = self.clauses.items[clause_index];
-        if (new_literals.len <= pos.capacity) {
-            // overwrite in place
-            std.mem.copy(Literal, self.literals.items[pos.start .. pos.start + new_literals.len], new_literals);
-            pos.end = pos.start + new_literals.len;
-            self.clauses.items[clause_index] = pos;
-        } else {
-            // append at end
-            const start = self.literals.items.len;
-            try self.literals.appendAll(new_literals);
-            pos.start = start;
-            pos.end = start + new_literals.len;
-            pos.capacity = new_literals.len;
-            pos.alive = true;
-            self.clauses.items[clause_index] = pos;
-        }
     }
 
     pub fn aliveClauses(self: *CNF) AliveClauseIter {
