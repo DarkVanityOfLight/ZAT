@@ -84,7 +84,7 @@ pub fn solve(self: *Self) !Result {
     process_loop: while (true) {
         return self.search() catch |err| switch (err) {
             error.OutOfAssigns, error.OutOfPropagations, error.OutOfConflicts => {
-                if (restarts % 100 == 0 and restarts > 0) {
+                if (restarts % 10 == 0 and restarts > 0) {
                     try self.writer.print(
                         "Check-in at restart {d}:\n{f}",
                         .{ restarts, self.statistics },
@@ -454,10 +454,10 @@ fn findWatchCandidate(self: *Self, cMeta: Clauses.ClauseMeta, other_watch: ?Lite
     var candidate: ?Literal = null;
     const literals = self.cnf.getClause(cMeta);
     for (literals) |other_candidate| {
-        if (other_watch != null and candidate == other_watch.?) continue;
+        if (other_watch != null and other_candidate == other_watch.?) continue;
 
         // If candidate is satisified choose that one
-        if (!self.trail.contains(other_candidate)) return other_candidate;
+        if (self.trail.contains(other_candidate)) return other_candidate;
 
         // If it is unassigned pick that as candidate
         if (!self.trail.contains(Variables.notMaybe(other_candidate))) {
