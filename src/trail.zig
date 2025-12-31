@@ -8,6 +8,7 @@ const VSIDS = @import("VSIDS.zig");
 const LiteralEpochDict = @import("datastructures/EpochDict.zig").LiteralEpochDict;
 
 const AssignmentSet = LiteralEpochDict(usize);
+const PhaseSet = LiteralEpochDict(void);
 
 pub const Reason = union(enum) {
     unit_propagation: *Clauses.ClauseMeta,
@@ -28,6 +29,7 @@ pub const Trail = struct {
     current_level: usize,
     gpa: std.mem.Allocator,
     vsids: *VSIDS, // Since VSIDS is closely related to the stack we have it here
+    phase: PhaseSet,
 
     pub fn init(gpa: std.mem.Allocator, num_vars: usize, bump_summand: f64, decay_factor: f64) !Trail {
         return Trail{
@@ -35,6 +37,7 @@ pub const Trail = struct {
             .assignments = try AssignmentSet.init(gpa, num_vars),
             .current_level = 0,
             .vsids = try VSIDS.init(gpa, num_vars, bump_summand, decay_factor),
+            .phase = try PhaseSet.init(gpa, num_vars),
             .gpa = gpa,
         };
     }
@@ -43,6 +46,7 @@ pub const Trail = struct {
         self.stack.deinit(self.gpa);
         self.assignments.deinit();
         self.vsids.deinit(self.gpa);
+        self.phase.deinit();
     }
 
     pub fn assign(self: *Trail, literal: Literal, reason: Reason) !void {
@@ -62,6 +66,9 @@ pub const Trail = struct {
         });
 
         self.assignments.set(literal, self.current_level);
+        // Save the assignment to the phase
+        self.phase.set(literal, {});
+        self.phase.unset(Variables.not(literal));
     }
 
     pub fn pop(self: *Trail) !TrailFrame {
@@ -122,8 +129,11 @@ pub const Trail = struct {
 
     pub fn chooseLit(self: *Trail) ?Variables.Literal {
         while (self.vsids.selectVar()) |candidate| {
+            const candidate_lit = Variables.litOf(candidate);
             if (!self.isVarAssigned(candidate)) {
-                return Variables.litOf(candidate);
+                // Check phase saving
+                if (self.phase.contains(candidate_lit)) return candidate_lit;
+                return Variables.not(candidate_lit);
             }
         }
         return null;
