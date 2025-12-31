@@ -92,14 +92,13 @@ pub const CNF = struct {
         return meta_ptr;
     }
 
-    pub fn invalidateClause(self: *CNF, cMeta: *ClauseMeta, watcher: *Watcher) !void {
+    pub fn invalidateClause(self: *CNF, cMeta: *ClauseMeta) !void {
         if (!cMeta.alive) return;
         cMeta.alive = false;
         switch (cMeta.clauseType) {
             ClauseType.learned => self.num_learned_clauses -= 1,
             ClauseType.fixed => self.num_fixed_clauses -= 1,
         }
-        try watcher.unregister(cMeta); // NOTE: We can do this lazily if cost is to high
     }
 
     /// MAKE SURE YOU INVALIDATED FIRST
@@ -184,7 +183,7 @@ const AliveClauseMetaIter = struct {
     fn findNext(self: *AliveClauseMetaIter, startIndex: usize) ?*ClauseMeta {
         var i = startIndex;
         while (i < self.cnf.clauses.items.len) : (i += 1) {
-            const meta_ptr = &self.cnf.clauses.items[i];
+            const meta_ptr = self.cnf.clauses.items[i]; // FIXME: Borrow here is weird and wrong i think
             if (meta_ptr.alive) {
                 return meta_ptr;
             }

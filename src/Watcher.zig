@@ -42,52 +42,18 @@ pub fn deinit(self: *@This()) void {
     self.book.deinit();
 }
 
-pub fn modifyWatch(self: *@This(), lit: ?Literal, clause: *ClauseMeta, add: bool) !void {
-    if (lit) |l| {
-        // get(l) returns ?*Page. Since we pre-filled them, we can safely unwrap .?
-        const watch_list = self.book.get(l).?;
-
-        if (add) {
-            try watch_list.append(clause);
-        } else {
-            // Find and remove (O(N) for the length of the watch list)
-            for (watch_list.items, 0..) |entry, i| {
-                if (entry == clause) {
-                    _ = watch_list.swapRemove(i);
-                    break;
-                }
-            }
-        }
-    }
+pub fn addWatch(self: *@This(), to: Literal, clause: *ClauseMeta) !void {
+    const to_list = self.book.get(to).?;
+    try to_list.append(clause);
 }
 
 pub fn register(self: *@This(), clause: *ClauseMeta) !void {
-    try self.modifyWatch(clause.watch1, clause, true);
-    try self.modifyWatch(clause.watch2, clause, true);
+    try self.addWatch(clause.watch1.?, clause);
+    try self.addWatch(clause.watch2.?, clause);
 }
 
-pub fn unregister(self: *@This(), clause: *ClauseMeta) !void {
-    try self.modifyWatch(clause.watch1, clause, false);
-    try self.modifyWatch(clause.watch2, clause, false);
-}
-
+// Keep this access directly, since iterator is not removal aware
+// IF YOU ARE ITERATING OVER THIS CHECK THAT THE CLAUSES WATCH LITERAL ACTUALLY CONTAINS YOUR LITERAL
 pub fn watched(self: *@This(), literal: Literal) *Page {
     return self.book.get(literal).?;
-}
-
-// FIXME: This is slowing us down much
-pub fn moveWatch(self: *@This(), from: Literal, to: Literal, clause: *ClauseMeta) !void {
-    const to_list = self.book.get(to).?;
-    try to_list.append(clause);
-
-    // Remove from old list
-    const from_list = self.book.get(from).?;
-    for (from_list.items, 0..) |entry, i| {
-        if (entry == clause) {
-            _ = from_list.swapRemove(i);
-            return;
-        }
-    }
-    // Should not be reachable if logic is correct
-    std.debug.assert(false);
 }

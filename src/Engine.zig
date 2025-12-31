@@ -30,13 +30,6 @@ inline fn getWatchedLiteral(cMeta: Clauses.ClauseMeta, is_watch_1: bool) ?Litera
     return if (is_watch_1) cMeta.watch1 else cMeta.watch2;
 }
 
-/// Helper to determine which slot (1 or 2) a specific literal occupies in a clause
-inline fn getWatcherSlot(cMeta: Clauses.ClauseMeta, lit: Literal) ?bool {
-    if (cMeta.watch1 == lit) return true;
-    if (cMeta.watch2 == lit) return false;
-    return null;
-}
-
 const Self = @This();
 
 trail: Trail,
@@ -115,7 +108,7 @@ fn initializeWatches(self: *Self) !Result {
             if (self.trail.contains(Variables.not(lit))) return .unsat;
             try self.trail.assign(lit, .unit);
             cMeta.watch1 = lit;
-            try self.watcher.modifyWatch(lit, cMeta, true); // This is what .register does under the hood for both watchers
+            try self.watcher.addWatch(lit, cMeta);
         }
     }
 
@@ -176,7 +169,7 @@ fn pruneClauses(self: *Self) !void {
             // Mark for deletion. This clause (and any following it)
             // will now fall outside the new length of the ArrayList.
             try self.proof.delClause(self.cnf.getClause(cMeta.*)); //FIXME: Invalidates our DRAT proof somehow
-            try self.cnf.invalidateClause(cMeta, &self.watcher);
+            try self.cnf.invalidateClause(cMeta);
         }
     }
 
@@ -393,23 +386,25 @@ fn propagate(self: *Self, start_index: usize) !?*Clauses.ClauseMeta {
         while (i < watch_list.items.len) {
             const clause = watch_list.items[i];
 
-            if (!clause.alive) {
-                i += 1;
+            const w1 = clause.watch1;
+            const w2 = clause.watch2;
+
+            // --- LAZY CLEANUP LOGIC ---
+            // If clause is deleted, remove it.
+            // If false_lit is no longer one of the two watched literals, remove it.
+            const is_actually_watched = (w1 == false_lit or w2 == false_lit);
+            if (!clause.alive or !is_actually_watched) {
+                _ = watch_list.swapRemove(i);
+                // Do not increment i, because swapRemove moved a new element here
                 continue;
             }
+            // --------------------------
 
-            // Determine which slot of the clause is watching 'false_lit'
-            // If it's in the watch list, it MUST be in slot 1 or 2
-            const is_slot_1 = getWatcherSlot(clause.*, false_lit).?;
+            // Determine which slot is the other one
+            const other_lit = if (w1 == false_lit) w2 else w1;
+            const is_slot_1 = (w1 == false_lit);
 
-            // Check the OTHER watcher
-            const other_lit = getWatchedLiteral(clause.*, !is_slot_1) orelse {
-                // The only reason the other literal might be null is if the clause only contains one literal
-                return clause;
-            };
-
-            //If the OTHER watcher is already True, the clause is satisfied.
-            // We don't need to do anything, not even move the watch.
+            // If the OTHER watcher is already True, clause satisfied
             if (self.trail.contains(other_lit)) {
                 i += 1;
                 continue;
@@ -428,7 +423,7 @@ fn propagate(self: *Self, start_index: usize) !?*Clauses.ClauseMeta {
                 // We could not move the watch. The clause is now Unit or Conflicting.
 
                 // Check status of the other literal
-                if (self.trail.contains(Variables.not(other_lit))) {
+                if (other_lit == null or self.trail.contains(Variables.not(other_lit.?))) {
                     // The other literal is ALSO False. Conflict!
                     return clause;
                 } else {
@@ -436,7 +431,7 @@ fn propagate(self: *Self, start_index: usize) !?*Clauses.ClauseMeta {
                     // We propagate 'other_lit' to make the clause True.
                     // NOTE: We leave the watch on 'false_lit' for now,
                     try bank.countPropagate();
-                    try self.trail.assign(other_lit, .{ .unit_propagation = clause });
+                    try self.trail.assign(other_lit.?, .{ .unit_propagation = clause });
 
                     // We move to the next clause in this list
                     i += 1;
@@ -470,21 +465,20 @@ fn findWatchCandidate(self: *Self, cMeta: Clauses.ClauseMeta, other_watch: ?Lite
 /// Tries to move the watcher for `cMeta` from the `current_slot` to a new literal.
 /// Returns true if successful (watch moved).
 /// Returns false if no other non-false literal exists (cannot move).
+/// THIS REMOVAL IS LAZY
 fn moveWatch(self: *Self, cMeta: *Clauses.ClauseMeta, moving_slot_1: bool) !bool {
-    // Early exit for binary clauses
     if (cMeta.end - cMeta.start < 3) return false;
 
-    const current_lit = getWatchedLiteral(cMeta.*, moving_slot_1);
     const other_lit = getWatchedLiteral(cMeta.*, !moving_slot_1);
 
     if (self.findWatchCandidate(cMeta.*, other_lit)) |replacement| {
-        // 1. Update Metadata
+        // Update Metadata locally in the clause
         if (moving_slot_1) cMeta.watch1 = replacement else cMeta.watch2 = replacement;
 
-        // 2. Update Watcher lists
-        try self.watcher.moveWatch(current_lit.?, replacement, cMeta);
+        // ONLY add to the new list.
+        // We do NOT remove from the current_lit list yet.
+        try self.watcher.addWatch(replacement, cMeta);
         return true;
     }
-
     return false;
 }
