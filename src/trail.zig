@@ -13,7 +13,6 @@ const PhaseSet = LiteralEpochDict(void);
 pub const Reason = union(enum) {
     unit_propagation: *Clauses.ClauseMeta,
     assigned, // Represents a Decision
-    backtracked,
     unit,
 };
 
@@ -55,7 +54,6 @@ pub const Trail = struct {
         switch (reason) {
             .unit_propagation => |cMeta| cMeta.locked = true,
             .assigned => self.current_level += 1,
-            .backtracked => {},
             .unit => {},
         }
 
@@ -108,7 +106,6 @@ pub const Trail = struct {
             switch (frame.reason) {
                 .unit_propagation => |cMeta| cMeta.locked = false,
                 .assigned => self.current_level -= 1,
-                .backtracked => {},
                 .unit => {},
             }
 
