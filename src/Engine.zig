@@ -84,7 +84,7 @@ pub fn solve(self: *Self) !Result {
     process_loop: while (true) {
         return self.search() catch |err| switch (err) {
             error.OutOfAssigns, error.OutOfPropagations, error.OutOfConflicts => {
-                if (restarts % 10 == 0 and restarts > 0) {
+                if (restarts % 100 == 0 and restarts > 0) {
                     try self.writer.print(
                         "Check-in at restart {d}:\n{f}",
                         .{ restarts, self.statistics },
@@ -175,6 +175,7 @@ fn pruneClauses(self: *Self) !void {
         } else {
             // Mark for deletion. This clause (and any following it)
             // will now fall outside the new length of the ArrayList.
+            try self.proof.delClause(self.cnf.getClause(cMeta.*)); //FIXME: Invalidates our DRAT proof somehow
             try self.cnf.invalidateClause(cMeta, &self.watcher);
         }
     }
@@ -450,16 +451,20 @@ fn propagate(self: *Self, start_index: usize) !?*Clauses.ClauseMeta {
 /// Searches for a literal within a clause that is not False and is not `other_watch`.
 /// Returns null if no such literal exists.
 fn findWatchCandidate(self: *Self, cMeta: Clauses.ClauseMeta, other_watch: ?Literal) ?Literal {
-    // TODO: Maybe search for a good candidate
+    var candidate: ?Literal = null;
     const literals = self.cnf.getClause(cMeta);
-    for (literals) |candidate| {
+    for (literals) |other_candidate| {
         if (other_watch != null and candidate == other_watch.?) continue;
 
-        if (!self.trail.contains(Variables.notMaybe(candidate))) {
-            return candidate;
+        // If candidate is satisified choose that one
+        if (!self.trail.contains(other_candidate)) return other_candidate;
+
+        // If it is unassigned pick that as candidate
+        if (!self.trail.contains(Variables.notMaybe(other_candidate))) {
+            candidate = candidate orelse other_candidate;
         }
     }
-    return null;
+    return candidate;
 }
 
 /// Tries to move the watcher for `cMeta` from the `current_slot` to a new literal.
