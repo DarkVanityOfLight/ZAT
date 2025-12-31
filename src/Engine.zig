@@ -16,7 +16,7 @@ const CLAUSE_LIMIT_INCREASE = 1000;
 const VSIDS_BUMP = 1.0;
 const VSIDS_DECAY_FACTOR = 1.1;
 
-// TODO: Handle unit clauses at other levels
+// TODO: Handle learned unit clauses everywhere
 
 const ConflictData = struct {
     backtrack_level: usize,
@@ -248,7 +248,9 @@ fn resolveConflict(self: *Self, conflict: *Clauses.ClauseMeta) !void {
         Clauses.LearnedInfo{ .lbd = data.lbd },
     ); // Will copy new_clause
 
-    try self.watcher.register(meta_ptr);
+    try self.watcher.addWatch(meta_ptr.watch1.?, meta_ptr);
+    if (data.second_watch) |_| try self.watcher.addWatch(meta_ptr.watch2.?, meta_ptr);
+
     self.learningClauseSet.reset();
     self.learningClauseList.clearRetainingCapacity();
 
